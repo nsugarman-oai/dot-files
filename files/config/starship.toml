@@ -1,0 +1,7 @@
+command_timeout = 500
+
+[golang]
+disabled = true
+
+[rust]
+disabled = true

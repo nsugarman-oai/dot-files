@@ -1,0 +1,22 @@
+[core]
+	hooksPath = /Library/Application Support/OpenAI/Tools/PushPatrol/git-hooks
+	editor = cursor
+[lfs]
+	hooksPath = /Library/Application Support/OpenAI/Tools/PushPatrol/git-hooks/lfs
+[user]
+	name = nsugarman-oai
+	email = nsugarman@openai.com
+[feature]
+	manyFiles = true
+[credential "https://github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[include]
+	path = /Users/nsugarman/.config/git/aliases.conf
+[pull]
+	rebase = true
+[init]
+	defaultBranch = main

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: ./install <name>
+
+Names:
+  all
+  zshrc
+  zshrc-public
+  config-git-aliases
+  config-starship
+  gitconfig
+  local-bin-git-alias
+EOF
+}
+
+name="${1:-}"
+
+case "$name" in
+  all) exec "$ROOT_DIR/scripts/install-all.sh" ;;
+  zshrc) exec "$ROOT_DIR/scripts/install-zshrc.sh" ;;
+  zshrc-public) exec "$ROOT_DIR/scripts/install-zshrc-public.sh" ;;
+  config-git-aliases) exec "$ROOT_DIR/scripts/install-config-git-aliases.sh" ;;
+  config-starship) exec "$ROOT_DIR/scripts/install-config-starship.sh" ;;
+  gitconfig) exec "$ROOT_DIR/scripts/install-gitconfig.sh" ;;
+  local-bin-git-alias) exec "$ROOT_DIR/scripts/install-local-bin-git-alias.sh" ;;
+  help|-h|--help|"")
+    usage
+    ;;
+  *)
+    printf 'Unknown install target: %s\n\n' "$name" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+

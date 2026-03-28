@@ -1,0 +1,91 @@
+# fzf (fuzzy finder)
+source <(fzf --zsh)
+export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border"
+
+# starship (fancy prompt)
+# Suppress Starship timeout warnings in large repos while still surfacing errors.
+export STARSHIP_LOG="${STARSHIP_LOG:-error}"
+eval "$(starship init zsh)"
+
+# zoxide (better cd)
+eval "$(zoxide init zsh)"
+
+# zsh-autosuggestions - autocomplete previews (Ctrl-e to accept)
+# zsh-syntax-highlighting - syntax highlighting
+# .zshrc-secrets - API keys and the like
+for f in \
+  /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh \
+  /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \
+  ~/.zshrc-secrets
+do
+  [ -f "$f" ] && source "$f"
+done
+
+# eza (better ls)
+alias ls="eza --icons --group-directories-first" # clean listing
+alias ll="eza -lah --icons --group-directories-first --git" # detailed listing
+alias lt="eza --tree --level=2 --icons" # directory tree
+alias lg="eza -lah --git --icons" # git-aware listing
+
+# bat (better cat)
+alias cat="bat"
+
+# Catppuccin color theme
+export LS_COLORS="$(cat ~/.config/lscolors)"
+
+# search through history with C-P, C-N
+bindkey "^P" history-beginning-search-backward
+bindkey "^N" history-beginning-search-forward
+
+# Make word-wise deletion stop at path separators (so Ctrl+W on `some/dir` deletes `dir`)
+WORDCHARS=${WORDCHARS//\//}
+
+# Move by one word with Ctrl+F / Ctrl+B (match typical Alt+→ / Alt+← behavior)
+bindkey "^F" forward-word
+bindkey "^B" backward-word
+
+# Bigger history
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=100000
+SAVEHIST=100000
+setopt HIST_IGNORE_DUPS SHARE_HISTORY HIST_FCNTL_LOCK
+
+# Better tab completion
+typeset -U fpath
+for dir in /opt/homebrew/share/zsh/site-functions /usr/local/share/zsh/site-functions; do
+  [[ -d "$dir" ]] && fpath=("$dir" $fpath)
+done
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+bindkey '^I' expand-or-complete
+[[ -n ${widgets[fzf-completion]-} ]] && bindkey '^X^I' fzf-completion
+
+# AUDO_CD - cd without typing `cd`
+# INTERACTIVE_COMMENTS - use `#` comments in the shell
+setopt AUTO_CD INTERACTIVE_COMMENTS
+
+## aliases
+# open a file in cursor (creating the dir as needed)
+function c() {
+  if [[ $# -lt 1 ]]; then
+    print -u2 "usage: c <path> [cursor args...]"
+    return 1
+  fi
+
+  local target="$1"
+  mkdir -p -- "${target:h}"
+  # we have to touch the file for some reason, or else cursor won't open it
+  touch -- "$target"
+  cursor "$@"
+}
+
+export EDITOR='cursor'
+
+# note: "zsh" sources ~/.zshrc
+alias czsh='cursor ~/.zshrc-public'
+alias czsho='cursor ~/.zshrc'
+alias cgit='cursor ~/.config/git/aliases.conf'
+alias cgit2='cursor ~/.local/bin/git-alias'
+
+alias g='git'
+alias n='pnpm'
