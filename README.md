@@ -2,7 +2,7 @@
 
 Home dotfiles live in `files/` and get symlinked back into place.
 
-## Commands
+## CLI Commands
 
 - `./status` reports whether each managed file is currently linked from this repo.
 - `./link <file>` symlinks one managed file from `files/` into its home-directory location.
@@ -10,14 +10,14 @@ Home dotfiles live in `files/` and get symlinked back into place.
 - `./link all` symlinks every managed file into its home-directory location.
 - `./unlink all` removes every managed symlink from its home-directory location.
 
-## Agent Commands
+## Agent Skills
 
-You can ask agents to do the following (they will follow AGENTS.md):
+You can ask agents to do the following:
 
 - Remove <file>
 - Add <file>
 
-E.g. from repo root: `codex remove zshrc`
+E.g. from repo root: `codex e "remove zshrc"`
 
 ## Files
 
