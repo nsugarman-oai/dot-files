@@ -45,7 +45,7 @@ backup_target() {
   printf 'Backed up existing %s to %s\n' "$target" "$backup_path"
 }
 
-install_file() {
+link_file() {
   local source_rel="$1"
   local target_rel="$2"
   local source target link_target
@@ -63,7 +63,7 @@ install_file() {
   if [ -L "$target" ]; then
     link_target="$(readlink "$target")"
     if [ "$link_target" = "$source" ]; then
-      printf 'Already installed: %s -> %s\n' "$target" "$source"
+      printf 'Already linked: %s -> %s\n' "$target" "$source"
       return 0
     fi
     backup_target "$target_rel" "$target"
@@ -75,7 +75,7 @@ install_file() {
   printf 'Linked %s -> %s\n' "$target" "$source"
 }
 
-uninstall_file() {
+unlink_file() {
   local source_rel="$1"
   local target_rel="$2"
   local source target link_target
@@ -112,20 +112,20 @@ file_status() {
   target="$(target_path "$target_rel")"
 
   if [ ! -e "$source" ]; then
-    printf 'not installed'
+    printf 'not linked'
     return
   fi
 
   if [ ! -L "$target" ]; then
-    printf 'not installed'
+    printf 'not linked'
     return
   fi
 
   link_target="$(readlink "$target")"
   if [ "$link_target" = "$source" ]; then
-    printf 'installed'
+    printf 'linked'
     return
   fi
 
-  printf 'not installed'
+  printf 'not linked'
 }

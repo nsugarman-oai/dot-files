@@ -4,4 +4,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-install_file "files/local/bin/git-alias" ".local/bin/git-alias"
+unlink_file "files/config/starship.toml" ".config/starship.toml"

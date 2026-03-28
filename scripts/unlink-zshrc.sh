@@ -4,4 +4,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-install_file "files/.zshrc-public" ".zshrc-public"
+unlink_file "files/.zshrc" ".zshrc"
