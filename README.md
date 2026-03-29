@@ -19,9 +19,9 @@ Note: your original dot-files are backed up in this repo under `tmp/backups/`
 ### Agent Skills
 
 - `@install` runs the merge-aware install flow for all managed files, equivalent to `@link-merge all`
+- `@link-merge <file|all>` merges an existing home-directory file into the repo copy, removes the original file, and then recreates the symlink
 - `@add-file <file>` adds a file to this repo, replacing the original file with a symlink
 - `@remove-file <file>` removes a file from this repo, restoring the original file (if it was symlinked)
-- `@link-merge <file|all>` merges an existing home-directory file into the repo copy, removes the original file, and then recreates the symlink
 
 Note: use these skills from the codex app (using `codex -e "..."` causes a sandbox permission error)
 
@@ -41,5 +41,3 @@ Note: use these skills from the codex app (using `codex -e "..."` causes a sandb
 - `config-starship`
 - `gitconfig`
 - `local-bin-git-alias`
-
-If a link target already exists, `./link <file>` now fails and recommends `@link-merge`, which is the path that preserves and merges the existing file before linking.
