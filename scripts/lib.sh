@@ -48,6 +48,7 @@ backup_target() {
 link_file() {
   local source_rel="$1"
   local target_rel="$2"
+  local command_name="${3:-}"
   local source target link_target
 
   source="$(source_path "$source_rel")"
@@ -66,9 +67,16 @@ link_file() {
       printf 'Already linked: %s -> %s\n' "$target" "$source"
       return 0
     fi
-    backup_target "$target_rel" "$target"
-  elif [ -e "$target" ]; then
-    backup_target "$target_rel" "$target"
+  fi
+
+  if [ -L "$target" ] || [ -e "$target" ]; then
+    printf 'Target already exists: %s\n' "$target" >&2
+    if [ -n "$command_name" ]; then
+      printf 'Use @link-merge %s in the Codex app to merge the existing file into the repo copy before linking.\n' "$command_name" >&2
+    else
+      printf 'Use @link-merge in the Codex app to merge the existing file into the repo copy before linking.\n' >&2
+    fi
+    exit 1
   fi
 
   ln -s "$source" "$target"
