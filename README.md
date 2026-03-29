@@ -12,12 +12,10 @@ Home dotfiles live in `files/` and get symlinked back into place.
 
 ## Agent Skills
 
-You can ask agents to do the following:
+- `@remove-file <file>` removes a file from this repo, converting the symlink back into the original file
+- `@add-file <file>` adds a file to this repo, replacing the original file with a symlink
 
-- Remove <file>
-- Add <file>
-
-E.g. from repo root: `codex e "remove zshrc"`
+Use these skills from the codex app (using `codex -e "..."` causes a sandbox error)
 
 ## Files
 
