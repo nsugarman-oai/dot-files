@@ -33,7 +33,7 @@ Note: use these skills from the codex app (using `codex -e "..."` causes a sandb
 - `./link all` symlinks every managed file into its home-directory location.
 - `./unlink all` removes every managed symlink from its home-directory location.
 
-## Files
+## Managed Files
 
 - `zshrc`
 - `zshrc-public`

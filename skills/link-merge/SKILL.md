@@ -17,7 +17,7 @@ metadata:
 - For `all`, iterate each managed file name individually. Do not call `./link all`, because one existing target will stop the whole run before per-file merge handling happens.
 
 ## Workflow
-1. Inspect the live managed-file mapping from `link`, the per-file scripts in `scripts/`, and `scripts/status.sh`.
+1. Inspect the live managed-file mapping from `link`, `scripts/lib.sh`, and `scripts/status.sh`.
 2. Resolve the requested target set:
    - Single file: operate on that one managed name.
    - `all`: operate on every managed file name except `all`.

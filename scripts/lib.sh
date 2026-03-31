@@ -14,6 +14,48 @@ target_path() {
   printf '%s/%s' "$HOME_DIR" "$1"
 }
 
+# Single source of truth for managed command names and their source/target paths.
+managed_target_specs() {
+  cat <<'EOF'
+zshrc|files/.zshrc|.zshrc
+zshrc-public|files/.zshrc-public|.zshrc-public
+config-git-aliases|files/config/git/aliases.conf|.config/git/aliases.conf
+config-starship|files/config/starship.toml|.config/starship.toml
+gitconfig|files/.gitconfig|.gitconfig
+local-bin-git-alias|files/local/bin/git-alias|.local/bin/git-alias
+EOF
+}
+
+print_managed_target_names() {
+  managed_target_specs | cut -d'|' -f1
+}
+
+resolve_managed_target() {
+  local requested_name="$1"
+  local name source_rel target_rel
+
+  while IFS='|' read -r name source_rel target_rel; do
+    [ -n "$name" ] || continue
+
+    if [ "$name" = "$requested_name" ]; then
+      printf '%s|%s\n' "$source_rel" "$target_rel"
+      return 0
+    fi
+  done < <(managed_target_specs)
+
+  return 1
+}
+
+for_each_managed_target() {
+  local callback="$1"
+  local name source_rel target_rel
+
+  while IFS='|' read -r name source_rel target_rel; do
+    [ -n "$name" ] || continue
+    "$callback" "$name" "$source_rel" "$target_rel"
+  done < <(managed_target_specs)
+}
+
 backup_stamp() {
   if [ -n "${DOTFILES_BACKUP_STAMP:-}" ]; then
     printf '%s' "$DOTFILES_BACKUP_STAMP"

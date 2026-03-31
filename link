@@ -2,38 +2,35 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/scripts/lib.sh"
 
 usage() {
-  cat <<'EOF'
+  cat <<EOF
 Usage: ./link <name>
 
 Names:
   all
-  zshrc
-  zshrc-public
-  config-git-aliases
-  config-starship
-  gitconfig
-  local-bin-git-alias
 EOF
+
+  print_managed_target_names | sed 's/^/  /'
 }
 
 name="${1:-}"
+target_spec=""
 
 case "$name" in
   all) exec "$ROOT_DIR/scripts/link-all.sh" ;;
-  zshrc) exec "$ROOT_DIR/scripts/link-zshrc.sh" ;;
-  zshrc-public) exec "$ROOT_DIR/scripts/link-zshrc-public.sh" ;;
-  config-git-aliases) exec "$ROOT_DIR/scripts/link-config-git-aliases.sh" ;;
-  config-starship) exec "$ROOT_DIR/scripts/link-config-starship.sh" ;;
-  gitconfig) exec "$ROOT_DIR/scripts/link-gitconfig.sh" ;;
-  local-bin-git-alias) exec "$ROOT_DIR/scripts/link-local-bin-git-alias.sh" ;;
   help|-h|--help|"")
     usage
     ;;
   *)
-    printf 'Unknown link target: %s\n\n' "$name" >&2
-    usage >&2
-    exit 1
+    if ! target_spec="$(resolve_managed_target "$name")"; then
+      printf 'Unknown link target: %s\n\n' "$name" >&2
+      usage >&2
+      exit 1
+    fi
+
+    IFS='|' read -r source_rel target_rel <<<"$target_spec"
+    link_file "$source_rel" "$target_rel" "$name"
     ;;
 esac

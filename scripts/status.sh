@@ -26,11 +26,6 @@ report_file() {
   printf 'not linked     %s -> %s\n' "$name" "$target"
 }
 
-report_file "zshrc" "files/.zshrc" ".zshrc"
-report_file "zshrc-public" "files/.zshrc-public" ".zshrc-public"
-report_file "config-git-aliases" "files/config/git/aliases.conf" ".config/git/aliases.conf"
-report_file "config-starship" "files/config/starship.toml" ".config/starship.toml"
-report_file "gitconfig" "files/.gitconfig" ".gitconfig"
-report_file "local-bin-git-alias" "files/local/bin/git-alias" ".local/bin/git-alias"
+for_each_managed_target report_file
 
 printf '\nSummary: %d linked, %d not linked\n' "$linked_count" "$not_linked_count"
