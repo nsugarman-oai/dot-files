@@ -22,3 +22,9 @@ alias ofi="pnpm install --frozen-lockfile && pnpm pre"
 alias ofp="pnpm format:fix && pnpm lint --fix && pnpm types"
 
 source ~/.zshrc-public
+# bun completions
+[ -s "/Users/nsugarman/.bun/_bun" ] && source "/Users/nsugarman/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

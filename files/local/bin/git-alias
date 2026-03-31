@@ -96,6 +96,21 @@ case "$command_name" in
   resb)
     git reset "$(git merge-base "origin/$(main_branch)" HEAD)"
     ;;
+  # commit all with a message, or pass commit flags directly
+  ca)
+    git add .
+    case "${1:-}" in
+      "")
+        git commit
+        ;;
+      -*)
+        git commit "$@"
+        ;;
+      *)
+        git commit -m "$*"
+        ;;
+    esac
+    ;;
   swm)
     git switch --detach "origin/$(main_branch)"
     ;;
