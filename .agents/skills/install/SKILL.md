@@ -13,7 +13,7 @@ metadata:
 - The user wants the equivalent of `@link-merge all`.
 
 ## Workflow
-1. Use the same managed-file mapping and merge behavior defined in `skills/link-merge/SKILL.md`.
+1. Use the same managed-file mapping and merge behavior defined in `.agents/skills/link-merge/SKILL.md`.
 2. Resolve the request as `@link-merge all`.
 3. Process every managed file name individually, using the `link-merge` workflow for each one.
 4. Report per-file results and the final state of each original target path.
