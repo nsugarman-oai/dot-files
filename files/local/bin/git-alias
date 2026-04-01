@@ -208,13 +208,13 @@ case "$command_name" in
   dimq)
     git diff --name-only "origin/$(main_branch)" "$@"
     ;;
-  # branch tips by recency, limited to 12
+  # branch tips by recency, limited to 18
   br)
-    branch_list 12
+    branch_list 18
     ;;
-  # branch tips by recency, limited to 30
+  # branch tips by recency, limited to 36
   br2)
-    branch_list 30
+    branch_list 36
     ;;
   # branch tips by recency, unlimited
   br3)
