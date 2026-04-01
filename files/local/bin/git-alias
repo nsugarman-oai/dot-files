@@ -38,6 +38,38 @@ branch_list() {
   git for-each-ref --color=auto --sort=-committerdate --count="$count" --format="$format" refs/heads
 }
 
+log_list() {
+  count=${1:-all}
+  shift || true
+
+  color_sha=''
+  color_time=''
+  color_reset=''
+  if [ -t 1 ]; then
+    color_sha=$(printf '\033[33m')
+    color_time=$(printf '\033[90m')
+    color_reset=$(printf '\033[0m')
+  fi
+
+  delimiter=$(printf '\037')
+  format="%h%x1f%s%x1f%cr"
+
+  if [ "$count" = "all" ]; then
+    git log --color=never --format="$format" "$@" |
+      while IFS="$delimiter" read -r sha subject age; do
+        age=${age% ago}
+        printf '%s%s%s %s %s(%s)%s\n' "$color_sha" "$sha" "$color_reset" "$subject" "$color_time" "$age" "$color_reset"
+      done
+    return
+  fi
+
+  git log --color=never --max-count="$count" --format="$format" "$@" |
+    while IFS="$delimiter" read -r sha subject age; do
+      age=${age% ago}
+      printf '%s%s%s %s %s(%s)%s\n' "$color_sha" "$sha" "$color_reset" "$subject" "$color_time" "$age" "$color_reset"
+    done
+}
+
 command_name=${1:-}
 [ -n "$command_name" ] || die "Usage: git-alias <command> [args...]"
 shift
@@ -147,6 +179,18 @@ case "$command_name" in
     [ -n "$branch" ] || die "Usage: git cpb <branch>"
     git cherry-pick "$(git merge-base "$branch" "origin/$(main_branch)")..$branch" -n
     git commit -am "$branch"
+    ;;
+  # commit log with relative time, limited to 12
+  lg)
+    log_list 12 "$@"
+    ;;
+  # commit log with relative time, limited to 30
+  lg2)
+    log_list 30 "$@"
+    ;;
+  # commit log with relative time, unlimited
+  lg3)
+    log_list all "$@"
     ;;
   # diff merge base
   dib)
