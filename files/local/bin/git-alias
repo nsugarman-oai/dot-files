@@ -26,6 +26,18 @@ reset_target() {
   printf 'HEAD~%s\n' "$count"
 }
 
+branch_list() {
+  count=${1:-all}
+  format='%(refname:short)  %(color:brightblack)(%(committerdate:relative))%(color:reset)'
+
+  if [ "$count" = "all" ]; then
+    git for-each-ref --color=auto --sort=-committerdate --format="$format" refs/heads
+    return
+  fi
+
+  git for-each-ref --color=auto --sort=-committerdate --count="$count" --format="$format" refs/heads
+}
+
 command_name=${1:-}
 [ -n "$command_name" ] || die "Usage: git-alias <command> [args...]"
 shift
@@ -151,6 +163,18 @@ case "$command_name" in
   # diff default branch with name-only
   dimq)
     git diff --name-only "origin/$(main_branch)" "$@"
+    ;;
+  # branch tips by recency, limited to 12
+  br)
+    branch_list 12
+    ;;
+  # branch tips by recency, limited to 30
+  br2)
+    branch_list 30
+    ;;
+  # branch tips by recency, unlimited
+  br3)
+    branch_list all
     ;;
   # start new branch from the default branch
   brs)
