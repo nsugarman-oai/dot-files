@@ -22,6 +22,22 @@ alias ofi="pnpm install --frozen-lockfile && pnpm pre"
 alias ofp="pnpm format:fix && pnpm lint --fix && pnpm types"
 
 source ~/.zshrc-public
+
+# Restore an interactive pager when the shell inherits the non-interactive
+# Codex defaults. This keeps `git log` from dumping the entire monorepo
+# history straight through `cat`.
+if [[ -o interactive ]]; then
+    if [[ "${PAGER:-}" == "cat" ]]; then
+        export PAGER="less"
+    fi
+    if [[ -z "${LESS:-}" ]]; then
+        export LESS="-FRX"
+    fi
+    if [[ "${GIT_PAGER:-}" == "cat" ]]; then
+        unset GIT_PAGER
+    fi
+fi
+
 # bun completions
 [ -s "/Users/nsugarman/.bun/_bun" ] && source "/Users/nsugarman/.bun/_bun"
 

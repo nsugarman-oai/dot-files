@@ -116,18 +116,15 @@ case "$command_name" in
     ;;
   # rebase on top of origin/branch
   rbb)
-    branch=$(current_branch)
-    git rebase "origin/$branch" "$@"
+    git rebase "origin/$(current_branch)" "$@"
     ;;
   # git rebase -i <merge-base>
-  rib)
-    branch=$(current_branch)
-    git rebase -i "$(git merge-base HEAD "origin/$branch")" "$@"
+  rbi)
+    git rebase -i "$(git merge-base "origin/$(main_branch)" HEAD)" "$@"
     ;;
   # fetch remote branch
   ftb)
-    branch=$(current_branch)
-    git fetch origin "$branch" "$@"
+    git fetch origin "$(current_branch)" "$@"
     ;;
   # fetch and rebase default branch, then update local default branch
   fr)

@@ -1,6 +1,6 @@
 [core]
 	hooksPath = /Library/Application Support/OpenAI/Tools/PushPatrol/git-hooks
-	editor = cursor
+	editor = cursor --wait
 [lfs]
 	hooksPath = /Library/Application Support/OpenAI/Tools/PushPatrol/git-hooks/lfs
 [user]
