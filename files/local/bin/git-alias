@@ -15,6 +15,11 @@ current_branch() {
   git symbolic-ref --quiet --short HEAD 2>/dev/null || die "Not on a branch."
 }
 
+current_upstream_ref() {
+  branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
+  git rev-parse --quiet --symbolic-full-name "$branch@{upstream}" 2>/dev/null || true
+}
+
 fetch_origin_main() {
   main_branch_name=$(main_branch)
   git fetch --no-tags origin "refs/heads/$main_branch_name:refs/remotes/origin/$main_branch_name"
@@ -41,6 +46,12 @@ branch_list() {
 log_list() {
   count=${1:-all}
   shift || true
+  main_branch_name=$(main_branch)
+  upstream_ref=$(current_upstream_ref)
+  upstream_decorate_arg=''
+  if [ -n "$upstream_ref" ]; then
+    upstream_decorate_arg="--decorate-refs=$upstream_ref"
+  fi
 
   git_color='never'
   color_time=''
@@ -57,7 +68,16 @@ log_list() {
   delimiter=$(printf '\037')
 
   if [ "$count" = "all" ]; then
-    git log --decorate=short --color="$git_color" --format="$format" "$@" |
+    git log \
+      --decorate=short \
+      --decorate-refs=HEAD \
+      --decorate-refs=refs/heads \
+      --decorate-refs=refs/tags \
+      --decorate-refs="refs/remotes/origin/$main_branch_name" \
+      $upstream_decorate_arg \
+      --color="$git_color" \
+      --format="$format" \
+      "$@" |
       awk -F "$delimiter" -v color_time="$color_time" -v color_reset="$color_reset" '
         function shorten_relative_time(age) {
           sub(/ ago$/, "", age)
@@ -82,7 +102,17 @@ log_list() {
     return
   fi
 
-  git log --decorate=short --color="$git_color" --max-count="$count" --format="$format" "$@" |
+  git log \
+    --decorate=short \
+    --decorate-refs=HEAD \
+    --decorate-refs=refs/heads \
+    --decorate-refs=refs/tags \
+    --decorate-refs="refs/remotes/origin/$main_branch_name" \
+    $upstream_decorate_arg \
+    --color="$git_color" \
+    --max-count="$count" \
+    --format="$format" \
+    "$@" |
     awk -F "$delimiter" -v color_time="$color_time" -v color_reset="$color_reset" '
       function shorten_relative_time(age) {
         sub(/ ago$/, "", age)
@@ -126,14 +156,14 @@ case "$command_name" in
   ftb)
     git fetch origin "$(current_branch)" "$@"
     ;;
-  # fetch and rebase default branch, then update local default branch
+  # fetch origin/main
+  ftm)
+    fetch_origin_main
+    ;;
+  # fetch origin/main, then rebase current branch on top of it
   fr)
     fetch_origin_main
     git rebase "origin/$(main_branch)"
-    ;;
-  # fetch and rebase local default branch only
-  frm)
-    fetch_origin_main
     ;;
   # fetch and rebase, then export
   fre)
