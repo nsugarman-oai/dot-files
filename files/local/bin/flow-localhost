@@ -5,20 +5,120 @@ DEFAULT_FLOWKIT_BACKEND_PORT=8081
 DEFAULT_FLOWKIT_UI_PORT=5173
 DEFAULT_TILT_PORT=10350
 QUIET_AFTER_OUTPUT_SECONDS=2
+ERROR_URL_DEBOUNCE_SECONDS=1
+CRASH_CONTEXT_LINES=80
 
 repo_root="$(pwd -P)"
 tilt_work_dir="$repo_root/api/outerloop"
+primary_repo_root="$HOME/code/openai"
+worktree_setup_script="$repo_root/.codex/environments/monorepo_worktree_setup.sh"
+script_name="${0##*/}"
+verbose=0
+shutdown_requested=0
+server_pid=""
+tracker_pid=""
+watcher_pid=""
+announcer_pid=""
+runtime_dir=""
 
-yellow_text() {
+if [ -d "$primary_repo_root" ]; then
+  primary_repo_root="$(cd "$primary_repo_root" && pwd -P)"
+fi
+
+blue_bold_text() {
   local text="$1"
 
-  if [ -t 1 ] || [ -t 3 ]; then
-    printf '\033[33m%s\033[0m' "$text"
+  if [ -t 1 ] || [ -t 2 ] || [ -t 3 ] || [ -t 4 ]; then
+    printf '\033[1;34m%s\033[0m' "$text"
     return
   fi
 
   printf '%s' "$text"
 }
+
+frontend_url() {
+  local port="$1"
+
+  blue_bold_text "http://localhost:$port/"
+}
+
+print_frontend_url_on_error() {
+  local port="$1"
+
+  printf '%s\n' "$(frontend_url "$port")" >&4
+}
+
+note_error_output() {
+  local error_sequence_file="$1"
+  local error_output_at_file="$2"
+  local error_sequence=0
+
+  error_sequence="$(cat "$error_sequence_file" 2>/dev/null || printf '0\n')"
+  error_sequence=$((error_sequence + 1))
+
+  printf '%s\n' "$error_sequence" >"$error_sequence_file"
+  printf '%s\n' "$(date +%s)" >"$error_output_at_file"
+}
+
+announce_frontend_url_after_errors() {
+  local frontend_port="$1"
+  local error_sequence_file="$2"
+  local error_output_at_file="$3"
+  local stop_file="$4"
+  local hold_file="$5"
+  local printed_sequence=0
+  local error_sequence=0
+  local last_error_at=0
+  local now=0
+
+  while true; do
+    error_sequence="$(cat "$error_sequence_file" 2>/dev/null || printf '0\n')"
+
+    if [ -f "$stop_file" ] && [ "$error_sequence" -le "$printed_sequence" ]; then
+      return 0
+    fi
+
+    if [ -f "$hold_file" ]; then
+      sleep 1
+      continue
+    fi
+
+    if [ "$error_sequence" -gt "$printed_sequence" ]; then
+      last_error_at="$(cat "$error_output_at_file" 2>/dev/null || printf '0\n')"
+      now="$(date +%s)"
+
+      if [ $((now - last_error_at)) -ge "$ERROR_URL_DEBOUNCE_SECONDS" ]; then
+        print_frontend_url_on_error "$frontend_port"
+        printed_sequence="$error_sequence"
+        continue
+      fi
+    fi
+
+    sleep 1
+  done
+}
+
+usage() {
+  printf 'Usage: %s [-v|--verbose]\n' "$script_name"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -v|--verbose)
+      verbose=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'flow-localhost: unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 port_is_taken() {
   local port="$1"
@@ -138,7 +238,7 @@ announce_when_frontend_is_ready() {
     last_output_at="$(cat "$last_output_file" 2>/dev/null || printf '%s\n' "$started_at")"
 
     if [ "$announced_start" -eq 0 ] && [ $((now - last_output_at)) -ge "$QUIET_AFTER_OUTPUT_SECONDS" ]; then
-      printf 'starting localhost on %s\n' "$(yellow_text "http://localhost:$port/")" >&3
+      printf 'starting localhost on %s\n' "$(blue_bold_text "http://localhost:$port/")" >&3
       announced_start=1
     fi
 
@@ -159,23 +259,107 @@ tilt_line_looks_like_error() {
     return 1
   fi
 
-  printf '%s\n' "$line" | grep -Eiq '(^|[[:space:]])(ERR!|ERROR|FATAL|PANIC)(:|[[:space:]]|$)|(^|[[:space:]])error:|^Traceback|(^|[[:space:]])Exception(:|[[:space:]]|$)|(^|[[:space:]])failed([[:space:]]|$)|timed out|unable to'
+  printf '%s\n' "$line" | grep -Eiq '(^|[[:space:]])(ERR!|ERROR|FATAL|PANIC)(:|[[:space:]]|$)|(^|[[:space:]])error:|^Traceback|(^|[[:space:]])Exception(:|[[:space:]]|$)|^[A-Za-z_][A-Za-z0-9_]*(Error|Exception|Exit):|(^|[[:space:]])failed([[:space:]]|$)|timed out|unable to'
 }
 
 track_tilt_output() {
   local last_output_file="$1"
+  local recent_output_file="$2"
+  local verbose_mode="$3"
+  local error_sequence_file="$4"
+  local error_output_at_file="$5"
   local line=""
+  local recent_line_count=0
+  local is_error=0
 
   while IFS= read -r line || [ -n "$line" ]; do
     printf '%s\n' "$(date +%s)" >"$last_output_file"
+    printf '%s\n' "$line" >>"$recent_output_file"
+    recent_line_count=$((recent_line_count + 1))
 
+    if [ "$recent_line_count" -gt $((CRASH_CONTEXT_LINES * 2)) ]; then
+      tail -n "$CRASH_CONTEXT_LINES" "$recent_output_file" >"$recent_output_file.tmp"
+      mv "$recent_output_file.tmp" "$recent_output_file"
+      recent_line_count="$CRASH_CONTEXT_LINES"
+    fi
+
+    is_error=0
     if tilt_line_looks_like_error "$line"; then
+      is_error=1
+    fi
+
+    if [ "$verbose_mode" -eq 1 ] || [ "$is_error" -eq 1 ]; then
       printf '%s\n' "$line" >&4
     fi
-  done
 
-  rm -f "$last_output_file"
+    if [ "$is_error" -eq 1 ]; then
+      note_error_output "$error_sequence_file" "$error_output_at_file"
+    fi
+  done
 }
+
+print_failure_context() {
+  local exit_status="$1"
+  local recent_output_file="$2"
+  local error_sequence_file="$3"
+  local error_output_at_file="$4"
+
+  [ "$exit_status" -ne 0 ] || return 0
+  [ "$shutdown_requested" -eq 0 ] || return 0
+
+  if [ "$verbose" -eq 0 ] && [ -s "$recent_output_file" ]; then
+    printf 'flow-localhost: tilt exited with status %s\n' "$exit_status" >&4
+    printf 'flow-localhost: recent output follows\n' >&4
+    tail -n "$CRASH_CONTEXT_LINES" "$recent_output_file" >&4
+  fi
+
+  note_error_output "$error_sequence_file" "$error_output_at_file"
+}
+
+forward_signal() {
+  local signal="$1"
+
+  shutdown_requested=1
+
+  if [ -n "$server_pid" ]; then
+    kill -s "$signal" "$server_pid" 2>/dev/null || true
+  fi
+}
+
+cleanup_runtime_state() {
+  if [ -n "$watcher_pid" ]; then
+    kill "$watcher_pid" 2>/dev/null || true
+  fi
+
+  if [ -n "$announcer_pid" ]; then
+    kill "$announcer_pid" 2>/dev/null || true
+  fi
+
+  if [ -n "$tracker_pid" ]; then
+    kill "$tracker_pid" 2>/dev/null || true
+  fi
+
+  if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ]; then
+    rm -rf "$runtime_dir"
+  fi
+}
+
+source_worktree_setup_if_needed() {
+  if [ "$repo_root" = "$primary_repo_root" ]; then
+    return 0
+  fi
+
+  if [ ! -f "$worktree_setup_script" ]; then
+    printf 'flow-localhost: missing worktree setup script: %s\n' "$worktree_setup_script" >&2
+    exit 1
+  fi
+
+  # Worktree runs need the monorepo environment bootstrapped before `applied`.
+  # shellcheck disable=SC1090
+  source "$worktree_setup_script"
+}
+
+source_worktree_setup_if_needed
 
 command -v applied >/dev/null 2>&1 || {
   printf 'flow-localhost: required command not found: applied\n' >&2
@@ -199,15 +383,60 @@ export FLOWKIT_BACKEND_PORT
 export FLOWKIT_UI_PORT
 
 started_at="$(date +%s)"
-last_output_file="$(mktemp "${TMPDIR:-/tmp}/flow-localhost-output.XXXXXX")"
+runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/flow-localhost.XXXXXX")"
+last_output_file="$runtime_dir/last-output-at"
+recent_output_file="$runtime_dir/recent-output.log"
+output_pipe="$runtime_dir/tilt-output.pipe"
+error_sequence_file="$runtime_dir/error-sequence"
+error_output_at_file="$runtime_dir/error-output-at"
+error_url_stop_file="$runtime_dir/error-url.stop"
+error_url_hold_file="$runtime_dir/error-url.hold"
+mkfifo "$output_pipe"
 printf '%s\n' "$started_at" >"$last_output_file"
+: >"$recent_output_file"
+printf '0\n' >"$error_sequence_file"
+printf '0\n' >"$error_output_at_file"
 
 # Preserve the user's stdout/stderr so the readiness watcher can print after
-# tilt output goes quiet, while the tracker forwards only error-like lines.
+# tilt output goes quiet, while the tracker keeps a short tail for crash dumps.
 exec 3>&1
 exec 4>&2
-exec > >(track_tilt_output "$last_output_file") 2>&1
+trap cleanup_runtime_state EXIT
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
 
-announce_when_frontend_is_ready "$FLOWKIT_UI_PORT" "$$" "$started_at" "$last_output_file" &
+announce_frontend_url_after_errors "$FLOWKIT_UI_PORT" "$error_sequence_file" "$error_output_at_file" "$error_url_stop_file" "$error_url_hold_file" &
+announcer_pid="$!"
+
+track_tilt_output "$last_output_file" "$recent_output_file" "$verbose" "$error_sequence_file" "$error_output_at_file" <"$output_pipe" &
+tracker_pid="$!"
+
 cd "$tilt_work_dir"
-exec applied tilt up flowkit --port "$tilt_port"
+applied tilt up flowkit --port "$tilt_port" >"$output_pipe" 2>&1 &
+server_pid="$!"
+
+announce_when_frontend_is_ready "$FLOWKIT_UI_PORT" "$server_pid" "$started_at" "$last_output_file" &
+watcher_pid="$!"
+
+set +e
+wait "$server_pid"
+exit_status="$?"
+
+if [ "$exit_status" -ne 0 ]; then
+  : >"$error_url_hold_file"
+  kill "$watcher_pid" 2>/dev/null || true
+fi
+
+wait "$tracker_pid"
+wait "$watcher_pid"
+set -e
+
+print_failure_context "$exit_status" "$recent_output_file" "$error_sequence_file" "$error_output_at_file"
+rm -f "$error_url_hold_file"
+: >"$error_url_stop_file"
+
+set +e
+wait "$announcer_pid"
+set -e
+
+exit "$exit_status"
