@@ -41,4 +41,4 @@ Note: use these skills from the codex app (using `codex -e "..."` causes a sandb
 - `config-starship`
 - `gitconfig`
 - `local-bin-git-alias`
-- `local-bin-flowkit-localhost`
+- `local-bin-flow-localhost`

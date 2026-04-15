@@ -16,24 +16,82 @@ alias gho='oai_gh'
 
 alias ca='oaicode'
 alias cf='oaicode -p flowkit --focus api/outerloop'
-alias kill-flow='{
-  ps -axo pid=,pgid=,command= | awk "
-    /flowkit-localhost\/scripts\/start_flowkit_localhost\.sh/ ||
-    /uvicorn flowkit\.asgi:application/ ||
-    /api\/outerloop\/flowkit_ui\/.*vite\/bin\/vite\.js --port/ { print \$2 }
-  "
-  for port in $(seq 8081 8101) $(seq 5173 5193); do
-    lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null | while read -r pid; do
-      ps -o pgid= -p "$pid"
-    done
-  done
-} | tr -d " " | sort -u | while read -r pgid; do
-  kill -9 -- "-$pgid"
-done'
+# Match Flowkit processes directly; the old lsof port sweep dominated latency.
+kill_flow() {
+  local matches pgids ports
+
+  matches="$(
+    ps eww -axo pgid=,command= | awk '
+      function print_port(port) {
+        if (port != "") {
+          print "port:" port
+        }
+      }
+
+      function extract_env_port(name,    i, parts) {
+        for (i = 2; i <= NF; i++) {
+          if ($i ~ ("^" name "=")) {
+            split($i, parts, "=")
+            return parts[2]
+          }
+        }
+
+        return ""
+      }
+
+      /flowkit-localhost\/scripts\/start_flowkit_localhost\.sh/ ||
+      /\/tilt up flowkit( --port [0-9]+)?([[:space:]]|$)/ ||
+      /uvicorn flowkit\.asgi:application/ ||
+      /api\/outerloop\/flowkit_ui\/.*vite\/bin\/vite\.js --port/ {
+        backend_port = extract_env_port("FLOWKIT_BACKEND_PORT")
+        ui_port = extract_env_port("FLOWKIT_UI_PORT")
+        tilt_port = extract_env_port("TILT_PORT")
+
+        gsub(/^[[:space:]]+/, "", $1)
+        print "pgid:" $1
+
+        if ($0 ~ /uvicorn flowkit\.asgi:application/) {
+          print_port(backend_port)
+        }
+
+        if ($0 ~ /\/tilt up flowkit( --port [0-9]+)?([[:space:]]|$)/) {
+          if (tilt_port != "") {
+            print_port(tilt_port)
+          } else if (match($0, /--port [0-9]+/)) {
+            print_port(substr($0, RSTART + 7, RLENGTH - 7))
+          }
+        }
+
+        if ($0 ~ /vite\/bin\/vite\.js --port/) {
+          if (ui_port != "") {
+            print_port(ui_port)
+          } else if (match($0, /--port [0-9]+/)) {
+            print_port(substr($0, RSTART + 7, RLENGTH - 7))
+          }
+        }
+      }
+    ' | sort -u
+  )"
+
+  pgids="$(printf '%s\n' "$matches" | awk -F: '/^pgid:/ { print $2 }')"
+  [ -n "$pgids" ] || return 0
+
+  ports="$(printf '%s\n' "$matches" | awk -F: '/^port:/ { print $2 }')"
+
+  while IFS= read -r pgid; do
+    [ -n "$pgid" ] || continue
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  done <<< "$pgids"
+
+  if [ -n "$ports" ]; then
+    printf 'killed flowkit ports:\n%s\n' "$ports"
+  fi
+}
+alias kill-flow='kill_flow'
 
 # openai flow install / pre 
-alias ofi="pnpm install --frozen-lockfile && pnpm pre"
-alias ofp="pnpm format:fix && pnpm lint --fix && pnpm types"
+#alias ofi="pnpm install --frozen-lockfile && pnpm pre"
+#alias ofp="pnpm format:fix && pnpm lint --fix && pnpm types"
 
 source ~/.zshrc-public
 

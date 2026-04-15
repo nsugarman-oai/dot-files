@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_FLOWKIT_BACKEND_PORT=8081
+DEFAULT_FLOWKIT_UI_PORT=5173
+DEFAULT_TILT_PORT=10350
+QUIET_AFTER_OUTPUT_SECONDS=2
+
+repo_root="$(pwd -P)"
+tilt_work_dir="$repo_root/api/outerloop"
+
+yellow_text() {
+  local text="$1"
+
+  if [ -t 1 ] || [ -t 3 ]; then
+    printf '\033[33m%s\033[0m' "$text"
+    return
+  fi
+
+  printf '%s' "$text"
+}
+
+port_is_taken() {
+  local port="$1"
+  lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+frontend_is_ready() {
+  local port="$1"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl --silent --fail --max-time 1 "http://127.0.0.1:$port/" >/dev/null 2>&1
+    return
+  fi
+
+  port_is_taken "$port"
+}
+
+path_is_within() {
+  local candidate="${1%/}"
+  local root="${2%/}"
+
+  [ "$candidate" = "$root" ] || [[ "$candidate/" == "$root/"* ]]
+}
+
+pid_cwd() {
+  local pid="$1"
+
+  lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | awk '
+    /^n/ {
+      print substr($0, 2)
+      exit
+    }
+  '
+}
+
+flowkit_pgids_for_target_dir() {
+  local pid pgid cwd
+
+  while IFS='|' read -r pid pgid; do
+    [ -n "$pid" ] || continue
+
+    cwd="$(pid_cwd "$pid")"
+    if [ -z "$cwd" ] || ! path_is_within "$cwd" "$tilt_work_dir"; then
+      continue
+    fi
+
+    printf '%s\n' "$pgid"
+  done < <(
+    ps -axo pid=,pgid=,command= | awk '
+      /\/tilt up flowkit( --port [0-9]+)?$/ ||
+      /uvicorn flowkit\.asgi:application/ ||
+      /api\/outerloop\/flowkit_ui\/.*vite\/bin\/vite\.js --port/ {
+        print $1 "|" $2
+      }
+    '
+  )
+}
+
+kill_existing_flowkit_for_target_dir() {
+  local pgids=""
+  local pgid
+
+  pgids="$(flowkit_pgids_for_target_dir)"
+  pgids="$(printf '%s\n' "$pgids" | tr -d ' ' | sed '/^$/d' | sort -u)"
+  [ -n "$pgids" ] || return 0
+
+  while IFS= read -r pgid; do
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  done < <(printf '%s\n' "$pgids")
+
+  sleep 1
+
+  while IFS= read -r pgid; do
+    kill -0 -- "-$pgid" 2>/dev/null || continue
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  done < <(printf '%s\n' "$pgids")
+}
+
+find_free_port_offset() {
+  local offset=0
+  local tilt_port=""
+  local backend_port=""
+  local ui_port=""
+
+  while true; do
+    tilt_port=$((DEFAULT_TILT_PORT + offset))
+    backend_port=$((DEFAULT_FLOWKIT_BACKEND_PORT + offset))
+    ui_port=$((DEFAULT_FLOWKIT_UI_PORT + offset))
+
+    if ! port_is_taken "$tilt_port" &&
+      ! port_is_taken "$backend_port" &&
+      ! port_is_taken "$ui_port"; then
+      printf '%s\n' "$offset"
+      return 0
+    fi
+
+    offset=$((offset + 1))
+  done
+}
+
+announce_when_frontend_is_ready() {
+  local port="$1"
+  local server_pid="$2"
+  local started_at="$3"
+  local last_output_file="$4"
+  local last_output_at=""
+  local announced_start=0
+  local now=""
+
+  while true; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      rm -f "$last_output_file"
+      return 1
+    fi
+
+    now="$(date +%s)"
+    last_output_at="$(cat "$last_output_file" 2>/dev/null || printf '%s\n' "$started_at")"
+
+    if [ "$announced_start" -eq 0 ] && [ $((now - last_output_at)) -ge "$QUIET_AFTER_OUTPUT_SECONDS" ]; then
+      printf 'starting localhost on %s\n' "$(yellow_text "http://localhost:$port/")" >&3
+      announced_start=1
+    fi
+
+    if [ "$announced_start" -eq 1 ] && frontend_is_ready "$port"; then
+      printf 'ready after %ss\n' "$((now - started_at))" >&3
+      rm -f "$last_output_file"
+      return 0
+    fi
+
+    sleep 1
+  done
+}
+
+tilt_line_looks_like_error() {
+  local line="$1"
+
+  if printf '%s\n' "$line" | grep -Fqi 'localdog'; then
+    return 1
+  fi
+
+  printf '%s\n' "$line" | grep -Eiq '(^|[[:space:]])(ERR!|ERROR|FATAL|PANIC)(:|[[:space:]]|$)|(^|[[:space:]])error:|^Traceback|(^|[[:space:]])Exception(:|[[:space:]]|$)|(^|[[:space:]])failed([[:space:]]|$)|timed out|unable to'
+}
+
+track_tilt_output() {
+  local last_output_file="$1"
+  local line=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$(date +%s)" >"$last_output_file"
+
+    if tilt_line_looks_like_error "$line"; then
+      printf '%s\n' "$line" >&4
+    fi
+  done
+
+  rm -f "$last_output_file"
+}
+
+command -v applied >/dev/null 2>&1 || {
+  printf 'flow-localhost: required command not found: applied\n' >&2
+  exit 1
+}
+
+[ -d "$repo_root/api/tilt" ] && [ -d "$tilt_work_dir" ] || {
+  printf 'flow-localhost: run this from the repo root so ./api/outerloop exists\n' >&2
+  exit 1
+}
+
+kill_existing_flowkit_for_target_dir
+
+port_offset="$(find_free_port_offset)"
+tilt_port=$((DEFAULT_TILT_PORT + port_offset))
+FLOWKIT_BACKEND_PORT=$((DEFAULT_FLOWKIT_BACKEND_PORT + port_offset))
+FLOWKIT_UI_PORT=$((DEFAULT_FLOWKIT_UI_PORT + port_offset))
+printf 'starting tilt on http://localhost:%s/\n' "$tilt_port"
+
+export FLOWKIT_BACKEND_PORT
+export FLOWKIT_UI_PORT
+
+started_at="$(date +%s)"
+last_output_file="$(mktemp "${TMPDIR:-/tmp}/flow-localhost-output.XXXXXX")"
+printf '%s\n' "$started_at" >"$last_output_file"
+
+# Preserve the user's stdout/stderr so the readiness watcher can print after
+# tilt output goes quiet, while the tracker forwards only error-like lines.
+exec 3>&1
+exec 4>&2
+exec > >(track_tilt_output "$last_output_file") 2>&1
+
+announce_when_frontend_is_ready "$FLOWKIT_UI_PORT" "$$" "$started_at" "$last_output_file" &
+cd "$tilt_work_dir"
+exec applied tilt up flowkit --port "$tilt_port"
