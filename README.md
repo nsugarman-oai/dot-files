@@ -14,6 +14,14 @@ This will
 
 Note: your original dot-files are backed up in this repo under `tmp/backups/`
 
+### Cursor
+
+To update terminal titles (useful for the flow-localhost script), set this option in your editor settings:
+
+```
+"terminal.integrated.tabs.title": "${sequence}",
+```
+
 ## Usage
 
 ### Agent Skills

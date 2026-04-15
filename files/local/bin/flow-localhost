@@ -19,6 +19,7 @@ server_pid=""
 tracker_pid=""
 watcher_pid=""
 announcer_pid=""
+title_updater_pid=""
 runtime_dir=""
 
 if [ -d "$primary_repo_root" ]; then
@@ -100,6 +101,61 @@ announce_frontend_url_after_errors() {
 
 usage() {
   printf 'Usage: %s [-v|--verbose]\n' "$script_name"
+}
+
+branch_name_for_title() {
+  local repo_dir="$1"
+  local branch_name=""
+
+  branch_name="$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)"
+  if [ -z "$branch_name" ]; then
+    branch_name="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || printf 'unknown\n')"
+  fi
+
+  case "$branch_name" in
+    dev/codex/*)
+      printf '%s\n' "${branch_name#dev/codex/}"
+      ;;
+    codex/*)
+      printf '%s\n' "${branch_name#codex/}"
+      ;;
+    *)
+      printf '%s\n' "$branch_name"
+      ;;
+  esac
+}
+
+terminal_title_text() {
+  local frontend_port="$1"
+  local repo_dir="$2"
+
+  printf '%s | %s' "$frontend_port" "$(branch_name_for_title "$repo_dir")"
+}
+
+set_terminal_title() {
+  local frontend_port="$1"
+  local repo_dir="$2"
+
+  [ -t 3 ] || return 0
+  printf '\033]0;%s\007' "$(terminal_title_text "$frontend_port" "$repo_dir")" >&3
+}
+
+update_terminal_title_loop() {
+  local frontend_port="$1"
+  local repo_dir="$2"
+  local last_title=""
+  local title=""
+
+  while true; do
+    title="$(terminal_title_text "$frontend_port" "$repo_dir")"
+
+    if [ "$title" != "$last_title" ]; then
+      printf '\033]0;%s\007' "$title" >&3
+      last_title="$title"
+    fi
+
+    sleep 60
+  done
 }
 
 while [ "$#" -gt 0 ]; do
@@ -331,6 +387,10 @@ cleanup_runtime_state() {
     kill "$watcher_pid" 2>/dev/null || true
   fi
 
+  if [ -n "$title_updater_pid" ]; then
+    kill "$title_updater_pid" 2>/dev/null || true
+  fi
+
   if [ -n "$announcer_pid" ]; then
     kill "$announcer_pid" 2>/dev/null || true
   fi
@@ -404,6 +464,10 @@ exec 4>&2
 trap cleanup_runtime_state EXIT
 trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM
+
+set_terminal_title "$FLOWKIT_UI_PORT" "$repo_root"
+update_terminal_title_loop "$FLOWKIT_UI_PORT" "$repo_root" &
+title_updater_pid="$!"
 
 announce_frontend_url_after_errors "$FLOWKIT_UI_PORT" "$error_sequence_file" "$error_output_at_file" "$error_url_stop_file" "$error_url_hold_file" &
 announcer_pid="$!"
