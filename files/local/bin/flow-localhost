@@ -108,9 +108,7 @@ branch_name_for_title() {
   local branch_name=""
 
   branch_name="$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)"
-  if [ -z "$branch_name" ]; then
-    branch_name="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || printf 'unknown\n')"
-  fi
+  [ -n "$branch_name" ] || return 1
 
   case "$branch_name" in
     dev/codex/*)
@@ -128,16 +126,20 @@ branch_name_for_title() {
 terminal_title_text() {
   local frontend_port="$1"
   local repo_dir="$2"
+  local branch_name=""
 
-  printf '%s | %s' "$frontend_port" "$(branch_name_for_title "$repo_dir")"
+  branch_name="$(branch_name_for_title "$repo_dir")" || return 1
+  printf '%s | %s' "$frontend_port" "$branch_name"
 }
 
 set_terminal_title() {
   local frontend_port="$1"
   local repo_dir="$2"
+  local title=""
 
   [ -t 3 ] || return 0
-  printf '\033]0;%s\007' "$(terminal_title_text "$frontend_port" "$repo_dir")" >&3
+  title="$(terminal_title_text "$frontend_port" "$repo_dir")" || return 0
+  printf '\033]0;%s\007' "$title" >&3
 }
 
 update_terminal_title_loop() {
@@ -147,7 +149,11 @@ update_terminal_title_loop() {
   local title=""
 
   while true; do
-    title="$(terminal_title_text "$frontend_port" "$repo_dir")"
+    if ! title="$(terminal_title_text "$frontend_port" "$repo_dir")"; then
+      last_title=""
+      sleep 60
+      continue
+    fi
 
     if [ "$title" != "$last_title" ]; then
       printf '\033]0;%s\007' "$title" >&3
