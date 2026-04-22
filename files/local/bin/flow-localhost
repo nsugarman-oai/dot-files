@@ -205,6 +205,10 @@ path_is_within() {
   [ "$candidate" = "$root" ] || [[ "$candidate/" == "$root/"* ]]
 }
 
+repo_is_primary_checkout() {
+  [ "$repo_root" = "$primary_repo_root" ]
+}
+
 pid_cwd() {
   local pid="$1"
 
@@ -260,7 +264,7 @@ kill_existing_flowkit_for_target_dir() {
 }
 
 find_free_port_offset() {
-  local offset=0
+  local offset="$1"
   local tilt_port=""
   local backend_port=""
   local ui_port=""
@@ -411,7 +415,7 @@ cleanup_runtime_state() {
 }
 
 source_worktree_setup_if_needed() {
-  if [ "$repo_root" = "$primary_repo_root" ]; then
+  if repo_is_primary_checkout; then
     return 0
   fi
 
@@ -439,7 +443,11 @@ command -v applied >/dev/null 2>&1 || {
 
 kill_existing_flowkit_for_target_dir
 
-port_offset="$(find_free_port_offset)"
+if repo_is_primary_checkout; then
+  port_offset="$(find_free_port_offset 0)"
+else
+  port_offset="$(find_free_port_offset 1)"
+fi
 tilt_port=$((DEFAULT_TILT_PORT + port_offset))
 FLOWKIT_BACKEND_PORT=$((DEFAULT_FLOWKIT_BACKEND_PORT + port_offset))
 FLOWKIT_UI_PORT=$((DEFAULT_FLOWKIT_UI_PORT + port_offset))
