@@ -89,6 +89,48 @@ kill_flow() {
 }
 alias kill-flow='kill_flow'
 
+# Match Workstreams listeners on the normal and +1 ports.
+kill_workstreams() {
+  local matches pgids ports port pids pid process_info cwd pgid
+
+  matches="$(
+    for port in 4010 4011 5203 5204; do
+      pids="$(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+      [ -n "$pids" ] || continue
+
+      while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+
+        process_info="$(lsof -a -p "$pid" -d cwd -Fgn 2>/dev/null || true)"
+        cwd="$(printf '%s\n' "$process_info" | awk '/^n/ { print substr($0, 2); exit }')"
+        case "$cwd" in
+          *work-streams*|*workstreams*)
+            pgid="$(printf '%s\n' "$process_info" | awk '/^g/ { print substr($0, 2); exit }')"
+            [ -n "$pgid" ] || continue
+            printf 'pgid:%s\n' "$pgid"
+            printf 'port:%s\n' "$port"
+            ;;
+        esac
+      done <<< "$pids"
+    done | sort -u
+  )"
+
+  pgids="$(printf '%s\n' "$matches" | awk -F: '/^pgid:/ { print $2 }')"
+  [ -n "$pgids" ] || return 0
+
+  ports="$(printf '%s\n' "$matches" | awk -F: '/^port:/ { print $2 }')"
+
+  while IFS= read -r pgid; do
+    [ -n "$pgid" ] || continue
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  done <<< "$pgids"
+
+  if [ -n "$ports" ]; then
+    printf 'killed workstreams ports:\n%s\n' "$ports"
+  fi
+}
+alias kill-workstreams='kill_workstreams'
+
 # openai flow install / pre 
 #alias ofi="pnpm install --frozen-lockfile && pnpm pre"
 #alias ofp="pnpm format:fix && pnpm lint --fix && pnpm types"
