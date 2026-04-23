@@ -23,6 +23,8 @@ config-git-aliases|files/config/git/aliases.conf|.config/git/aliases.conf
 config-starship|files/config/starship.toml|.config/starship.toml
 gitconfig|files/.gitconfig|.gitconfig
 local-bin-git-alias|files/local/bin/git-alias|.local/bin/git-alias
+local-bin-flow-kill|files/local/bin/flow-kill|.local/bin/flow-kill
+local-bin-flow-list|files/local/bin/flow-list|.local/bin/flow-list
 local-bin-flow-localhost|files/local/bin/flow-localhost|.local/bin/flow-localhost
 EOF
 }

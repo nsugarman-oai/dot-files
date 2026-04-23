@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_name="${0##*/}"
+raw=0
+
+usage() {
+  printf 'Usage: %s [--raw]\n' "$script_name"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --raw)
+      raw=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf '%s: unknown option: %s\n' "$script_name" "$1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+flowkit_rows() {
+  ps eww -axo pgid=,command= | awk '
+    function extract_env_port(name,    i, parts) {
+      for (i = 2; i <= NF; i++) {
+        if ($i ~ ("^" name "=")) {
+          split($i, parts, "=")
+          return parts[2]
+        }
+      }
+
+      return ""
+    }
+
+    function command_port_after(flag, line,    port) {
+      if (match(line, flag "[[:space:]]+[0-9]+")) {
+        port = substr(line, RSTART, RLENGTH)
+        sub(flag "[[:space:]]+", "", port)
+        return port
+      }
+
+      return ""
+    }
+
+    function add_port(pgid, name, port) {
+      if (port ~ /^[0-9]+$/) {
+        ports[pgid, name] = port
+        seen[pgid] = 1
+      }
+    }
+
+    function mark_flowkit(pgid) {
+      if (pgid ~ /^[0-9]+$/) {
+        seen[pgid] = 1
+      }
+    }
+
+    {
+      pgid = $1
+      gsub(/^[[:space:]]+/, "", pgid)
+      line = $0
+
+      is_flowkit = \
+        line ~ /flowkit-localhost\/scripts\/start_flowkit_localhost\.sh/ ||
+        line ~ /(^|[[:space:]\/])tilt up flowkit( --port [0-9]+)?([[:space:]]|$)/ ||
+        line ~ /uvicorn flowkit\.asgi:application/ ||
+        (line ~ /api\/outerloop\/flowkit_ui\// && line ~ /vite\/bin\/vite\.js/)
+
+      if (!is_flowkit) {
+        next
+      }
+
+      mark_flowkit(pgid)
+      add_port(pgid, "api", extract_env_port("FLOWKIT_UI_PORT"))
+      add_port(pgid, "backend", extract_env_port("FLOWKIT_BACKEND_PORT"))
+      add_port(pgid, "tilt", extract_env_port("TILT_PORT"))
+
+      if (line ~ /(^|[[:space:]\/])tilt up flowkit( --port [0-9]+)?([[:space:]]|$)/) {
+        add_port(pgid, "tilt", command_port_after("--port", line))
+      }
+
+      if (line ~ /uvicorn flowkit\.asgi:application/) {
+        add_port(pgid, "backend", command_port_after("--port", line))
+      }
+
+      if (line ~ /api\/outerloop\/flowkit_ui\// && line ~ /vite\/bin\/vite\.js/) {
+        add_port(pgid, "api", command_port_after("--port", line))
+      }
+    }
+
+    END {
+      for (pgid in seen) {
+        api = ports[pgid, "api"]
+        backend = ports[pgid, "backend"]
+        tilt = ports[pgid, "tilt"]
+
+        if (api != "" || backend != "" || tilt != "") {
+          print pgid "|" api "|" backend "|" tilt
+        }
+      }
+    }
+  ' | sort -t'|' -k2,2n -k3,3n -k4,4n -k1,1n | awk -F'|' '
+    function flush_row() {
+      if (current_key != "") {
+        print pgids "|" api "|" backend "|" tilt
+      }
+    }
+
+    {
+      key = $2 "|" $3 "|" $4
+      if (key != current_key) {
+        flush_row()
+        current_key = key
+        pgids = $1
+        api = $2
+        backend = $3
+        tilt = $4
+        next
+      }
+
+      pgids = pgids "," $1
+    }
+
+    END {
+      flush_row()
+    }
+  '
+}
+
+format_port() {
+  local port="$1"
+
+  if [ -n "$port" ]; then
+    printf '%s' "$port"
+    return
+  fi
+
+  printf '?'
+}
+
+rows="$(flowkit_rows)"
+count="$(printf '%s\n' "$rows" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+if [ "$raw" -eq 1 ]; then
+  index=1
+  while IFS='|' read -r pgid api backend tilt; do
+    [ -n "$pgid" ] || continue
+    printf '%s|%s|%s|%s|%s\n' "$index" "$pgid" "$api" "$backend" "$tilt"
+    index=$((index + 1))
+  done <<< "$rows"
+  exit 0
+fi
+
+if [ "$count" -eq 0 ]; then
+  printf 'found 0 running flowkit localhosts\n'
+  exit 0
+fi
+
+if [ "$count" -eq 1 ]; then
+  printf 'found 1 running flowkit localhost:\n'
+else
+  printf 'found %s running flowkit localhosts:\n' "$count"
+fi
+
+index=1
+while IFS='|' read -r _pgid api backend tilt; do
+  [ -n "$_pgid" ] || continue
+  printf '%s. %s, %s, %s\n' "$index" "$(format_port "$api")" "$(format_port "$backend")" "$(format_port "$tilt")"
+  index=$((index + 1))
+done <<< "$rows"

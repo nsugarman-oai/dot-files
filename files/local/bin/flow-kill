@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_name="${0##*/}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+flow_list_cmd="$script_dir/flow-list"
+
+if [ ! -x "$flow_list_cmd" ]; then
+  flow_list_cmd="flow-list"
+fi
+
+usage() {
+  printf 'Usage: %s [number[,number]...]\n' "$script_name"
+}
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+format_port() {
+  local port="$1"
+
+  if [ -n "$port" ]; then
+    printf '%s' "$port"
+    return
+  fi
+
+  printf '?'
+}
+
+selected_rows_for_args() {
+  local rows="$1"
+  shift
+  local selected_rows=""
+  local selectors selector row
+
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' "$rows"
+    return
+  fi
+
+  selectors="${*//,/ }"
+  for selector in $selectors; do
+    if [[ ! "$selector" =~ ^[0-9]+$ ]]; then
+      die "$script_name: expected a flow-list number, got: $selector"
+    fi
+
+    row="$(printf '%s\n' "$rows" | awk -F'|' -v selector="$selector" '$1 == selector { print; found = 1 } END { exit found ? 0 : 1 }')" ||
+      die "$script_name: no running flowkit localhost numbered $selector"
+    selected_rows="${selected_rows}${row}"$'\n'
+  done
+
+  printf '%s\n' "$selected_rows" | sed '/^$/d' | sort -t'|' -k1,1n -u
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+rows="$("$flow_list_cmd" --raw)"
+rows="$(printf '%s\n' "$rows" | sed '/^$/d')"
+
+if [ -z "$rows" ]; then
+  printf 'found 0 running flowkit localhosts\n'
+  exit 0
+fi
+
+selected_rows="$(selected_rows_for_args "$rows" "$@")"
+
+while IFS='|' read -r _index pgids _api _backend _tilt; do
+  [ -n "$pgids" ] || continue
+
+  IFS=',' read -r -a pgid_list <<< "$pgids"
+  for pgid in "${pgid_list[@]}"; do
+    [ -n "$pgid" ] || continue
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  done
+done <<< "$selected_rows"
+
+sleep 1
+
+while IFS='|' read -r _index pgids _api _backend _tilt; do
+  [ -n "$pgids" ] || continue
+
+  IFS=',' read -r -a pgid_list <<< "$pgids"
+  for pgid in "${pgid_list[@]}"; do
+    [ -n "$pgid" ] || continue
+    kill -0 -- "-$pgid" 2>/dev/null || continue
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  done
+done <<< "$selected_rows"
+
+printf 'killed flowkit localhosts:\n'
+while IFS='|' read -r index _pgid api backend tilt; do
+  [ -n "$index" ] || continue
+  printf '%s. %s, %s, %s\n' "$index" "$(format_port "$api")" "$(format_port "$backend")" "$(format_port "$tilt")"
+done <<< "$selected_rows"
