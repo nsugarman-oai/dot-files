@@ -29,6 +29,24 @@ current_worktree_path() {
   canonical_path "$(git rev-parse --show-toplevel)"
 }
 
+main_worktree_path() {
+  git worktree list --porcelain | awk '/^worktree / { print substr($0, 10); exit }'
+}
+
+worktree_is_dirty() {
+  worktree=$1
+  [ -n "$(git -C "$worktree" status --porcelain)" ]
+}
+
+require_clean_worktree() {
+  worktree=$1
+  label=$2
+
+  if worktree_is_dirty "$worktree"; then
+    die "$label worktree has local changes: $worktree"
+  fi
+}
+
 worktree_for_branch() {
   target_ref="refs/heads/$1"
   git worktree list --porcelain | awk -v target_ref="$target_ref" '
@@ -68,18 +86,37 @@ worktree_for_branch() {
 }
 
 clear_swf_state() {
+  git config --local --unset-all swf.lastMode >/dev/null 2>&1 || true
   git config --local --unset-all swf.lastBranch >/dev/null 2>&1 || true
+  git config --local --unset-all swf.lastSourceHead >/dev/null 2>&1 || true
   git config --local --unset-all swf.lastSourceWorktree >/dev/null 2>&1 || true
   git config --local --unset-all swf.lastTargetWorktree >/dev/null 2>&1 || true
 }
 
-record_swf_state() {
+record_swf_branch_take_state() {
   branch=$1
   source_worktree=$2
   target_worktree=$3
 
   clear_swf_state
+  git config --local swf.lastMode branch-take
   git config --local swf.lastBranch "$branch"
+  git config --local swf.lastSourceWorktree "$source_worktree"
+  git config --local swf.lastTargetWorktree "$target_worktree"
+}
+
+record_swf_move_to_main_state() {
+  source_worktree=$1
+  target_worktree=$2
+  source_branch=$3
+  source_head=$4
+
+  clear_swf_state
+  git config --local swf.lastMode move-to-main
+  if [ -n "$source_branch" ]; then
+    git config --local swf.lastBranch "$source_branch"
+  fi
+  git config --local swf.lastSourceHead "$source_head"
   git config --local swf.lastSourceWorktree "$source_worktree"
   git config --local swf.lastTargetWorktree "$target_worktree"
 }
@@ -359,10 +396,49 @@ case "$command_name" in
   swm)
     git switch --detach "origin/$(main_branch)"
     ;;
-  # safely switch to a branch checked out by another worktree
+  # safely switch or move worktree state between checkouts
   swf)
     branch=${1:-}
-    [ -n "$branch" ] || die "Usage: git swf <branch>"
+    if [ -z "$branch" ]; then
+      source_worktree=$(current_worktree_path)
+      target_worktree=$(canonical_path "$(main_worktree_path)")
+      [ "$source_worktree" != "$target_worktree" ] || die "Usage: git swf <branch> or run git swf from a linked worktree."
+
+      source_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+      source_head=$(git rev-parse HEAD)
+      main_branch_name=$(main_branch)
+      default_ref="origin/$main_branch_name"
+      git rev-parse --verify --quiet "$default_ref" >/dev/null || die "No $default_ref ref to detach onto."
+
+      if [ -z "$source_branch" ] && ! worktree_is_dirty "$source_worktree" && [ -z "$(git rev-list --max-count=1 "$default_ref..HEAD")" ]; then
+        die "No branch, local changes, or committed changes to move."
+      fi
+
+      require_clean_worktree "$target_worktree" "Main"
+      source_stash=$(stash_worktree_if_dirty "$source_worktree" "git swf move-to-main")
+      git -C "$source_worktree" switch --detach "$default_ref"
+
+      if [ -n "$source_branch" ]; then
+        if ! git -C "$target_worktree" switch "$source_branch"; then
+          printf 'Switch failed; trying to restore %s onto %s.\n' "$source_branch" "$source_worktree" >&2
+          git -C "$source_worktree" switch "$source_branch" >/dev/null 2>&1 || true
+          apply_stash_if_set "$source_worktree" "$source_stash"
+          exit 1
+        fi
+      else
+        if ! git -C "$target_worktree" switch --detach "$source_head"; then
+          printf 'Switch failed; trying to restore detached HEAD %s onto %s.\n' "$source_head" "$source_worktree" >&2
+          git -C "$source_worktree" switch --detach "$source_head" >/dev/null 2>&1 || true
+          apply_stash_if_set "$source_worktree" "$source_stash"
+          exit 1
+        fi
+      fi
+
+      record_swf_move_to_main_state "$source_worktree" "$target_worktree" "$source_branch" "$source_head"
+      apply_stash_if_set "$target_worktree" "$source_stash"
+      exit 0
+    fi
+
     source_worktree=$(worktree_for_branch "$branch")
     target_worktree=$(current_worktree_path)
 
@@ -385,44 +461,99 @@ case "$command_name" in
       git -C "$source_worktree" switch "$branch" >/dev/null 2>&1 || true
       exit 1
     fi
-    record_swf_state "$branch" "$source_worktree" "$target_worktree"
+    record_swf_branch_take_state "$branch" "$source_worktree" "$target_worktree"
     ;;
   # undo the last forced worktree switch
   swf-)
+    mode=$(git config --local --get swf.lastMode 2>/dev/null || true)
     branch=$(git config --local --get swf.lastBranch 2>/dev/null || true)
+    source_head=$(git config --local --get swf.lastSourceHead 2>/dev/null || true)
     source_worktree=$(git config --local --get swf.lastSourceWorktree 2>/dev/null || true)
     target_worktree=$(git config --local --get swf.lastTargetWorktree 2>/dev/null || true)
-    [ -n "$branch" ] && [ -n "$source_worktree" ] && [ -n "$target_worktree" ] || die "No git swf state to undo."
+    [ -n "$mode" ] || mode=branch-take
 
-    current_worktree=$(current_worktree_path)
-    target_worktree=$(canonical_path "$target_worktree")
-    [ "$current_worktree" = "$target_worktree" ] || die "Run git swf- from the worktree that ran git swf: $target_worktree"
+    case "$mode" in
+      branch-take)
+        [ -n "$branch" ] && [ -n "$source_worktree" ] && [ -n "$target_worktree" ] || die "No git swf state to undo."
 
-    source_worktree=$(canonical_path "$source_worktree")
-    branch_holder=$(worktree_for_branch "$branch")
-    if [ -n "$branch_holder" ]; then
-      branch_holder=$(canonical_path "$branch_holder")
-      if [ "$branch_holder" != "$current_worktree" ] && [ "$branch_holder" != "$source_worktree" ]; then
-        die "$branch is checked out in another worktree: $branch_holder"
-      fi
-    fi
+        current_worktree=$(current_worktree_path)
+        target_worktree=$(canonical_path "$target_worktree")
+        [ "$current_worktree" = "$target_worktree" ] || die "Run git swf- from the worktree that ran git swf: $target_worktree"
 
-    main_branch_name=$(main_branch)
-    default_ref="origin/$main_branch_name"
-    git rev-parse --verify --quiet "$default_ref" >/dev/null || die "No $default_ref ref to detach onto."
+        [ -d "$source_worktree" ] || die "Original worktree no longer exists: $source_worktree"
+        source_worktree=$(canonical_path "$source_worktree")
+        branch_holder=$(worktree_for_branch "$branch")
+        if [ -n "$branch_holder" ]; then
+          branch_holder=$(canonical_path "$branch_holder")
+          if [ "$branch_holder" != "$current_worktree" ] && [ "$branch_holder" != "$source_worktree" ]; then
+            die "$branch is checked out in another worktree: $branch_holder"
+          fi
+        fi
 
-    current_stash=$(stash_worktree_if_dirty "$current_worktree" "git swf- current $branch")
-    git -C "$current_worktree" switch --detach "$default_ref"
+        main_branch_name=$(main_branch)
+        default_ref="origin/$main_branch_name"
+        git rev-parse --verify --quiet "$default_ref" >/dev/null || die "No $default_ref ref to detach onto."
 
-    source_stash=$(stash_worktree_if_dirty "$source_worktree" "git swf- displaced $branch")
-    source_branch=$(git -C "$source_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    if [ "$source_branch" != "$branch" ]; then
-      git -C "$source_worktree" switch "$branch"
-    fi
+        current_stash=$(stash_worktree_if_dirty "$current_worktree" "git swf- current $branch")
+        git -C "$current_worktree" switch --detach "$default_ref"
 
-    apply_stash_if_set "$source_worktree" "$source_stash"
-    apply_stash_if_set "$current_worktree" "$current_stash"
-    clear_swf_state
+        source_stash=$(stash_worktree_if_dirty "$source_worktree" "git swf- displaced $branch")
+        source_branch=$(git -C "$source_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+        if [ "$source_branch" != "$branch" ]; then
+          git -C "$source_worktree" switch "$branch"
+        fi
+
+        apply_stash_if_set "$source_worktree" "$source_stash"
+        apply_stash_if_set "$current_worktree" "$current_stash"
+        clear_swf_state
+        ;;
+      move-to-main)
+        [ -n "$source_worktree" ] && [ -n "$target_worktree" ] && [ -n "$source_head" ] || die "No git swf state to undo."
+
+        current_worktree=$(current_worktree_path)
+        target_worktree=$(canonical_path "$target_worktree")
+        [ "$current_worktree" = "$target_worktree" ] || die "Run git swf- from the main worktree that received git swf: $target_worktree"
+        [ -d "$source_worktree" ] || die "Original worktree no longer exists: $source_worktree"
+        source_worktree=$(canonical_path "$source_worktree")
+
+        target_branch=$(git -C "$current_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+        if [ -n "$branch" ]; then
+          [ "$target_branch" = "$branch" ] || die "Current worktree is not on $branch."
+        else
+          [ -z "$target_branch" ] || die "Current worktree is on $target_branch, but git swf moved a detached HEAD."
+        fi
+
+        main_branch_name=$(main_branch)
+        default_ref="origin/$main_branch_name"
+        git rev-parse --verify --quiet "$default_ref" >/dev/null || die "No $default_ref ref to detach onto."
+
+        return_head=$(git -C "$current_worktree" rev-parse HEAD)
+        current_stash=$(stash_worktree_if_dirty "$current_worktree" "git swf- move-to-main current")
+        git -C "$current_worktree" switch --detach "$default_ref"
+
+        source_stash=$(stash_worktree_if_dirty "$source_worktree" "git swf- move-to-main source")
+        if [ -n "$branch" ]; then
+          branch_holder=$(worktree_for_branch "$branch")
+          if [ -n "$branch_holder" ]; then
+            branch_holder=$(canonical_path "$branch_holder")
+            [ "$branch_holder" = "$source_worktree" ] || die "$branch is checked out in another worktree: $branch_holder"
+          fi
+          source_branch=$(git -C "$source_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+          if [ "$source_branch" != "$branch" ]; then
+            git -C "$source_worktree" switch "$branch"
+          fi
+        else
+          git -C "$source_worktree" switch --detach "$return_head"
+        fi
+
+        apply_stash_if_set "$source_worktree" "$source_stash"
+        apply_stash_if_set "$source_worktree" "$current_stash"
+        clear_swf_state
+        ;;
+      *)
+        die "Unknown git swf mode: $mode"
+        ;;
+    esac
     ;;
   # switch to rebased branch, done by cherry-picking changes on top of origin/default
   # git swrb branch-to-switch

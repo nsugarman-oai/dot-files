@@ -11,6 +11,7 @@ fi
 
 usage() {
   printf 'Usage: %s [number[,number]...]\n' "$script_name"
+  printf 'With no numbers, kills every flowkit localhost listed by flow-list.\n'
 }
 
 die() {

@@ -16,7 +16,6 @@ alias gho='oai_gh'
 
 alias ca='oaicode'
 alias cf='oaicode -p flowkit --focus api/outerloop'
-alias kill-flow='flow-kill'
 
 # Match Workstreams listeners on the normal and +1 ports.
 kill_workstreams() {
