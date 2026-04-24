@@ -397,6 +397,8 @@ case "$command_name" in
     git switch --detach "origin/$(main_branch)"
     ;;
   # safely switch or move worktree state between checkouts
+  # git swf branch-to-take
+  # git swf, from a linked worktree, moves its state to the main checkout
   swf)
     branch=${1:-}
     if [ -z "$branch" ]; then
