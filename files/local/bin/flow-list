@@ -163,11 +163,7 @@ if [ "$count" -eq 0 ]; then
   exit 0
 fi
 
-if [ "$count" -eq 1 ]; then
-  printf 'found 1 running flowkit localhost:\n'
-else
-  printf 'found %s running flowkit localhosts:\n' "$count"
-fi
+printf 'found %s running flowkit localhost (kill specific entries with: flow-kill 2,3):\n' "$count"
 
 index=1
 while IFS='|' read -r _pgid api backend tilt; do
@@ -175,5 +171,3 @@ while IFS='|' read -r _pgid api backend tilt; do
   printf '%s. %s, %s, %s\n' "$index" "$(format_port "$api")" "$(format_port "$backend")" "$(format_port "$tilt")"
   index=$((index + 1))
 done <<< "$rows"
-
-printf 'kill specific entries with: flow-kill 2,3\n'
