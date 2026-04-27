@@ -397,6 +397,7 @@ log_list() {
   count=${1:-all}
   shift || true
   main_branch_name=$(main_branch)
+  merge_base_commit=$(git merge-base "origin/$main_branch_name" HEAD 2>/dev/null || true)
   upstream_ref=$(current_upstream_ref)
   upstream_decorate_arg=''
   if [ -n "$upstream_ref" ]; then
@@ -404,15 +405,17 @@ log_list() {
   fi
 
   git_color='never'
+  color_merge_base=''
   color_time=''
   color_reset=''
   if [ -t 1 ]; then
     git_color='always'
+    color_merge_base=$(git config --get-color color.decorate.HEAD 'cyan bold')
     color_time=$(printf '\033[90m')
     color_reset=$(printf '\033[0m')
-    format="%C(yellow)%h%C(reset)%x1f%C(auto)%d%C(reset)%x1f%s%x1f%cr"
+    format="%H%x1f%C(yellow)%h%C(reset)%x1f%C(auto)%d%C(reset)%x1f%s%x1f%cr"
   else
-    format="%h%x1f%d%x1f%s%x1f%cr"
+    format="%H%x1f%h%x1f%d%x1f%s%x1f%cr"
   fi
 
   delimiter=$(printf '\037')
@@ -428,7 +431,7 @@ log_list() {
       --color="$git_color" \
       --format="$format" \
       "$@" |
-      awk -F "$delimiter" -v color_time="$color_time" -v color_reset="$color_reset" '
+      awk -F "$delimiter" -v merge_base_commit="$merge_base_commit" -v color_merge_base="$color_merge_base" -v color_time="$color_time" -v color_reset="$color_reset" '
         function shorten_relative_time(age) {
           sub(/ ago$/, "", age)
           gsub(/just now/, "now", age)
@@ -441,12 +444,38 @@ log_list() {
           gsub(/ years?/, "y", age)
           return age
         }
-        {
-          prefix = $1
-          if ($2 != "") {
-            prefix = prefix $2
+        function trim_decoration_spacing(decoration, esc, prefix) {
+          esc = sprintf("%c", 27)
+          prefix = ""
+          while (match(decoration, "^" esc "\\[[0-9;]*m")) {
+            prefix = prefix substr(decoration, RSTART, RLENGTH)
+            decoration = substr(decoration, RLENGTH + 1)
           }
-          printf "%s %s %s(%s)%s\n", prefix, $3, color_time, shorten_relative_time($4), color_reset
+          sub(/^ /, "", decoration)
+          return prefix decoration
+        }
+        function decoration_has_text(decoration, esc, plain) {
+          esc = sprintf("%c", 27)
+          plain = decoration
+          gsub(esc "\\[[0-9;]*m", "", plain)
+          return plain != ""
+        }
+        {
+          prefix = $2
+          decoration = $3
+          if (merge_base_commit != "" && $1 == merge_base_commit) {
+            prefix = prefix " " color_merge_base "MB" color_reset
+            if (decoration != "") {
+              decoration = trim_decoration_spacing(decoration)
+              if (decoration_has_text(decoration)) {
+                prefix = prefix " " decoration
+              }
+            }
+          }
+          if (decoration != "" && decoration_has_text(decoration) && !(merge_base_commit != "" && $1 == merge_base_commit)) {
+            prefix = prefix decoration
+          }
+          printf "%s %s %s(%s)%s\n", prefix, $4, color_time, shorten_relative_time($5), color_reset
         }
       '
     return
@@ -463,7 +492,7 @@ log_list() {
     --max-count="$count" \
     --format="$format" \
     "$@" |
-    awk -F "$delimiter" -v color_time="$color_time" -v color_reset="$color_reset" '
+    awk -F "$delimiter" -v merge_base_commit="$merge_base_commit" -v color_merge_base="$color_merge_base" -v color_time="$color_time" -v color_reset="$color_reset" '
       function shorten_relative_time(age) {
         sub(/ ago$/, "", age)
         gsub(/just now/, "now", age)
@@ -476,12 +505,38 @@ log_list() {
         gsub(/ years?/, "y", age)
         return age
       }
-      {
-        prefix = $1
-        if ($2 != "") {
-          prefix = prefix $2
+      function trim_decoration_spacing(decoration, esc, prefix) {
+        esc = sprintf("%c", 27)
+        prefix = ""
+        while (match(decoration, "^" esc "\\[[0-9;]*m")) {
+          prefix = prefix substr(decoration, RSTART, RLENGTH)
+          decoration = substr(decoration, RLENGTH + 1)
         }
-        printf "%s %s %s(%s)%s\n", prefix, $3, color_time, shorten_relative_time($4), color_reset
+        sub(/^ /, "", decoration)
+        return prefix decoration
+      }
+      function decoration_has_text(decoration, esc, plain) {
+        esc = sprintf("%c", 27)
+        plain = decoration
+        gsub(esc "\\[[0-9;]*m", "", plain)
+        return plain != ""
+      }
+      {
+        prefix = $2
+        decoration = $3
+        if (merge_base_commit != "" && $1 == merge_base_commit) {
+          prefix = prefix " " color_merge_base "MB" color_reset
+          if (decoration != "") {
+            decoration = trim_decoration_spacing(decoration)
+            if (decoration_has_text(decoration)) {
+              prefix = prefix " " decoration
+            }
+          }
+        }
+        if (decoration != "" && decoration_has_text(decoration) && !(merge_base_commit != "" && $1 == merge_base_commit)) {
+          prefix = prefix decoration
+        }
+        printf "%s %s %s(%s)%s\n", prefix, $4, color_time, shorten_relative_time($5), color_reset
       }
     '
 }
@@ -573,8 +628,24 @@ case "$command_name" in
         ;;
     esac
     ;;
+  # switch to main branch
   swm)
     git switch --detach "origin/$(main_branch)"
+    ;;
+  # switch to rebased branch, done by cherry-picking changes on top of origin/default
+  # git swrb branch-to-switch
+  swrb)
+    branch=${1:-}
+    [ -n "$branch" ] || die "Usage: git swrb <branch>"
+    main_branch_name=$(main_branch)
+    git switch --detach "origin/$main_branch_name" 2>/dev/null
+    git branch -D tmp >/dev/null 2>&1 || true
+    git branch tmp "$branch"
+    base_sha=$(git merge-base "origin/$main_branch_name" "$branch")
+    head_sha=$(git rev-parse "$branch")
+    git branch -D "$branch"
+    git switch -c "$branch"
+    git cherry-pick "$base_sha...$head_sha"
     ;;
   # copy branch or worktree state into the main checkout as one commit
   # git test
@@ -609,21 +680,6 @@ case "$command_name" in
 
     require_clean_worktree "$main_worktree" "Main"
     copy_git_test_state "$source_worktree" "$main_worktree" "$commit_name" "$source_mode" "$source_head"
-    ;;
-  # switch to rebased branch, done by cherry-picking changes on top of origin/default
-  # git swrb branch-to-switch
-  swrb)
-    branch=${1:-}
-    [ -n "$branch" ] || die "Usage: git swrb <branch>"
-    main_branch_name=$(main_branch)
-    git switch --detach "origin/$main_branch_name" 2>/dev/null
-    git branch -D tmp >/dev/null 2>&1 || true
-    git branch tmp "$branch"
-    base_sha=$(git merge-base "origin/$main_branch_name" "$branch")
-    head_sha=$(git rev-parse "$branch")
-    git branch -D "$branch"
-    git switch -c "$branch"
-    git cherry-pick "$base_sha...$head_sha"
     ;;
   # cherry-pick branch: "g cpb TEST"
   cpb)
