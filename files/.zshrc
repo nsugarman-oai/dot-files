@@ -18,7 +18,7 @@ alias ca='oaicode'
 alias cf='oaicode -p flowkit --focus api/outerloop'
 
 # Match Workstreams listeners on the normal and +1 ports.
-kill_workstreams() {
+workstreams_kill() {
   local matches pgids ports port pids pid process_info cwd pgid
 
   matches="$(
@@ -57,7 +57,7 @@ kill_workstreams() {
     printf 'killed workstreams ports:\n%s\n' "$ports"
   fi
 }
-alias kill-workstreams='kill_workstreams'
+alias workstreams-kill='workstreams_kill'
 
 # openai flow install / pre 
 #alias ofi="pnpm install --frozen-lockfile && pnpm pre"
