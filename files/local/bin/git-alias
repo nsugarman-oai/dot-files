@@ -29,10 +29,6 @@ current_worktree_path() {
   canonical_path "$(git rev-parse --show-toplevel)"
 }
 
-main_worktree_path() {
-  git worktree list --porcelain | awk '/^worktree / { print substr($0, 10); exit }'
-}
-
 worktree_for_branch() {
   target_ref="refs/heads/$1"
   git worktree list --porcelain | awk -v target_ref="$target_ref" '
@@ -71,6 +67,80 @@ worktree_for_branch() {
   '
 }
 
+worktrees_for_branch() {
+  target_ref="refs/heads/$1"
+  git worktree list --porcelain | awk -v target_ref="$target_ref" '
+    function print_if_match() {
+      if (path != "" && branch == target_ref) {
+        print path
+      }
+    }
+
+    /^worktree / {
+      print_if_match()
+      path = substr($0, 10)
+      branch = ""
+      next
+    }
+
+    /^branch / {
+      branch = substr($0, 8)
+      next
+    }
+
+    /^$/ {
+      print_if_match()
+      path = ""
+      branch = ""
+      next
+    }
+
+    END {
+      print_if_match()
+    }
+  '
+}
+
+branch_for_switch_target() {
+  target=$1
+
+  if [ "$target" != "-" ]; then
+    printf '%s\n' "$target"
+    return
+  fi
+
+  previous_ref=$(git rev-parse --symbolic-full-name --verify @{-1} 2>/dev/null) ||
+    die "No previous branch for git swt -."
+
+  case "$previous_ref" in
+    refs/heads/*)
+      printf '%s\n' "${previous_ref#refs/heads/}"
+      ;;
+    *)
+      die "Previous checkout is not a branch: $previous_ref"
+      ;;
+  esac
+}
+
+detach_other_worktrees_for_branch() {
+  branch=$1
+  current_worktree=$2
+  source_worktree=""
+
+  while IFS= read -r worktree; do
+    [ -n "$worktree" ] || continue
+    canonical_worktree=$(canonical_path "$worktree")
+    [ "$canonical_worktree" != "$current_worktree" ] || continue
+
+    [ -n "$source_worktree" ] || source_worktree=$canonical_worktree
+    git -C "$canonical_worktree" switch --detach >/dev/null
+  done <<EOF
+$(worktrees_for_branch "$branch")
+EOF
+
+  printf '%s\n' "$source_worktree"
+}
+
 require_clean_worktree() {
   worktree=$1
   label=$2
@@ -85,78 +155,78 @@ require_clean_worktree() {
 }
 
 clean_git_test_paths() {
-  main_worktree=$1
+  target_worktree=$1
   path_list=$2
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     validate_git_test_path "$path"
-    git -C "$main_worktree" --literal-pathspecs clean -fd -- "$path" >/dev/null 2>&1 || true
+    git -C "$target_worktree" --literal-pathspecs clean -fd -- "$path" >/dev/null 2>&1 || true
   done < "$path_list"
 }
 
-restore_git_test_main() {
-  main_worktree=$1
+restore_git_test_target() {
+  target_worktree=$1
   original_branch=$2
   original_head=$3
   cleanup_paths=${4:-}
 
-  git -C "$main_worktree" reset --hard >/dev/null 2>&1 || true
+  git -C "$target_worktree" reset --hard >/dev/null 2>&1 || true
   if [ -n "$original_branch" ]; then
-    if git -C "$main_worktree" switch "$original_branch" >/dev/null 2>&1; then
-      git -C "$main_worktree" reset --hard "$original_head" >/dev/null 2>&1 || true
+    if git -C "$target_worktree" switch "$original_branch" >/dev/null 2>&1; then
+      git -C "$target_worktree" reset --hard "$original_head" >/dev/null 2>&1 || true
     else
-      git -C "$main_worktree" switch --detach "$original_head" >/dev/null 2>&1 || true
+      git -C "$target_worktree" switch --detach "$original_head" >/dev/null 2>&1 || true
     fi
   else
-    git -C "$main_worktree" switch --detach "$original_head" >/dev/null 2>&1 || true
+    git -C "$target_worktree" switch --detach "$original_head" >/dev/null 2>&1 || true
   fi
 
   if [ -n "$cleanup_paths" ] && [ -s "$cleanup_paths" ]; then
-    clean_git_test_paths "$main_worktree" "$cleanup_paths"
+    clean_git_test_paths "$target_worktree" "$cleanup_paths"
   fi
 }
 
 recent_git_test_commits() {
-  main_worktree=$1
+  target_worktree=$1
   commit_name=$2
 
-  git -C "$main_worktree" log --max-count=10 --format='%H%x1f%s' |
+  git -C "$target_worktree" log --max-count=10 --format='%H%x1f%s' |
     awk -v commit_name="$commit_name" 'BEGIN { FS = "\037" } $2 == commit_name { print $1 }'
 }
 
 drop_git_test_commit() {
-  main_worktree=$1
+  target_worktree=$1
   commit=$2
   commit_name=$3
 
-  parent_commit=$(git -C "$main_worktree" rev-parse --verify "$commit^" 2>/dev/null) || {
+  parent_commit=$(git -C "$target_worktree" rev-parse --verify "$commit^" 2>/dev/null) || {
     printf 'Cannot remove existing git test commit without a parent: %s\n' "$commit_name" >&2
     return 1
   }
 
   printf 'Removing existing git test commit: %s\n' "$commit_name" >&2
 
-  if [ "$(git -C "$main_worktree" rev-parse HEAD)" = "$commit" ]; then
-    git -C "$main_worktree" reset --hard "$parent_commit"
+  if [ "$(git -C "$target_worktree" rev-parse HEAD)" = "$commit" ]; then
+    git -C "$target_worktree" reset --hard "$parent_commit"
     return
   fi
 
-  if ! git -C "$main_worktree" rebase --rebase-merges --onto "$parent_commit" "$commit"; then
-    git -C "$main_worktree" rebase --abort >/dev/null 2>&1 || true
+  if ! git -C "$target_worktree" rebase --rebase-merges --onto "$parent_commit" "$commit"; then
+    git -C "$target_worktree" rebase --abort >/dev/null 2>&1 || true
     return 1
   fi
 }
 
 drop_existing_git_test_commits() {
-  main_worktree=$1
+  target_worktree=$1
   commit_name=$2
-  existing_commits=$(recent_git_test_commits "$main_worktree" "$commit_name")
+  existing_commits=$(recent_git_test_commits "$target_worktree" "$commit_name")
 
   [ -n "$existing_commits" ] || return 0
 
   for existing_commit in $existing_commits; do
-    drop_git_test_commit "$main_worktree" "$existing_commit" "$commit_name" || return 1
+    drop_git_test_commit "$target_worktree" "$existing_commit" "$commit_name" || return 1
   done
 }
 
@@ -193,14 +263,14 @@ validate_git_test_paths() {
 }
 
 write_missing_git_test_paths() {
-  main_worktree=$1
+  target_worktree=$1
   path_list=$2
   missing_list=$3
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     validate_git_test_path "$path"
-    target_path=$main_worktree/$path
+    target_path=$target_worktree/$path
     if [ ! -e "$target_path" ] && [ ! -L "$target_path" ]; then
       printf '%s\n' "$path"
     fi
@@ -209,17 +279,17 @@ write_missing_git_test_paths() {
 
 copy_git_test_untracked() {
   source_worktree=$1
-  main_worktree=$2
+  target_worktree=$2
   untracked_list=$3
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     validate_git_test_path "$path"
     source_path=$source_worktree/$path
-    target_path=$main_worktree/$path
+    target_path=$target_worktree/$path
 
     if [ -e "$target_path" ] || [ -L "$target_path" ]; then
-      printf 'Refusing to overwrite existing path in main checkout: %s\n' "$path" >&2
+      printf 'Refusing to overwrite existing path in target worktree: %s\n' "$path" >&2
       return 1
     fi
 
@@ -230,22 +300,22 @@ copy_git_test_untracked() {
 
 copy_git_test_state() {
   source_repo=$1
-  main_worktree=$2
+  target_worktree=$2
   commit_name=$3
   source_mode=${4:-worktree}
   source_head=${5:-}
   [ -n "$source_head" ] || source_head=$(git -C "$source_repo" rev-parse HEAD)
-  original_head=$(git -C "$main_worktree" rev-parse HEAD)
-  original_branch=$(git -C "$main_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  original_head=$(git -C "$target_worktree" rev-parse HEAD)
+  original_branch=$(git -C "$target_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
-  existing_git_test_commits=$(recent_git_test_commits "$main_worktree" "$commit_name")
-  if [ -n "$existing_git_test_commits" ] && ! drop_existing_git_test_commits "$main_worktree" "$commit_name"; then
-    printf 'Failed to remove existing git test commit; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head"
+  existing_git_test_commits=$(recent_git_test_commits "$target_worktree" "$commit_name")
+  if [ -n "$existing_git_test_commits" ] && ! drop_existing_git_test_commits "$target_worktree" "$commit_name"; then
+    printf 'Failed to remove existing git test commit; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head"
     exit 1
   fi
 
-  target_head=$(git -C "$main_worktree" rev-parse HEAD)
+  target_head=$(git -C "$target_worktree" rev-parse HEAD)
   base_head=$(git_test_base_head "$source_repo" "$source_head" "$target_head")
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/git-test.XXXXXX")
 
@@ -283,39 +353,39 @@ copy_git_test_state() {
 
   awk 'NF && !seen[$0]++' "$committed_paths" "$staged_paths" "$unstaged_paths" "$untracked_list" > "$affected_paths"
   validate_git_test_paths "$affected_paths"
-  write_missing_git_test_paths "$main_worktree" "$affected_paths" "$cleanup_paths"
+  write_missing_git_test_paths "$target_worktree" "$affected_paths" "$cleanup_paths"
 
-  if [ -s "$committed_patch" ] && ! git -C "$main_worktree" apply --3way "$committed_patch"; then
-    printf 'Failed to apply committed changes; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if [ -s "$committed_patch" ] && ! git -C "$target_worktree" apply --3way "$committed_patch"; then
+    printf 'Failed to apply committed changes; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if [ -s "$staged_patch" ] && ! git -C "$main_worktree" apply --3way "$staged_patch"; then
-    printf 'Failed to apply staged changes; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if [ -s "$staged_patch" ] && ! git -C "$target_worktree" apply --3way "$staged_patch"; then
+    printf 'Failed to apply staged changes; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if [ -s "$unstaged_patch" ] && ! git -C "$main_worktree" apply --3way "$unstaged_patch"; then
-    printf 'Failed to apply unstaged changes; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if [ -s "$unstaged_patch" ] && ! git -C "$target_worktree" apply --3way "$unstaged_patch"; then
+    printf 'Failed to apply unstaged changes; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if ! copy_git_test_untracked "$source_repo" "$main_worktree" "$untracked_list"; then
-    printf 'Failed to copy untracked files; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if ! copy_git_test_untracked "$source_repo" "$target_worktree" "$untracked_list"; then
+    printf 'Failed to copy untracked files; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if [ -s "$affected_paths" ] && ! git -C "$main_worktree" --literal-pathspecs add -A --pathspec-from-file="$affected_paths"; then
-    printf 'Failed to stage copied changes; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if [ -s "$affected_paths" ] && ! git -C "$target_worktree" --literal-pathspecs add -A --pathspec-from-file="$affected_paths"; then
+    printf 'Failed to stage copied changes; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if git -C "$main_worktree" diff --cached --quiet; then
+  if git -C "$target_worktree" diff --cached --quiet; then
     if [ -n "$existing_git_test_commits" ]; then
       printf 'Removed existing git test commit; source has no changes to copy.\n' >&2
       cleanup_git_test_tmp
@@ -324,13 +394,13 @@ copy_git_test_state() {
     fi
 
     printf 'No changes to commit after copying source state.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
-  if ! git -C "$main_worktree" commit -m "$commit_name"; then
-    printf 'Failed to commit copied changes; restoring main checkout.\n' >&2
-    restore_git_test_main "$main_worktree" "$original_branch" "$original_head" "$cleanup_paths"
+  if ! git -C "$target_worktree" commit -m "$commit_name"; then
+    printf 'Failed to commit copied changes; restoring target worktree.\n' >&2
+    restore_git_test_target "$target_worktree" "$original_branch" "$original_head" "$cleanup_paths"
     exit 1
   fi
 
@@ -632,6 +702,21 @@ case "$command_name" in
   swm)
     git switch --detach "origin/$(main_branch)"
     ;;
+  # switch branch even if it is checked out in another worktree
+  # git swf branch|-
+  swf)
+    [ "$#" -eq 1 ] || die "Usage: git swf <branch|->"
+    git switch --ignore-other-worktrees "$1"
+    ;;
+  # take branch from another worktree, then switch to it
+  # git swt branch|-
+  swt)
+    [ "$#" -eq 1 ] || die "Usage: git swt <branch|->"
+    branch=$(branch_for_switch_target "$1")
+    current_worktree=$(current_worktree_path)
+    detach_other_worktrees_for_branch "$branch" "$current_worktree" >/dev/null
+    git switch "$1"
+    ;;
   # switch to rebased branch, done by cherry-picking changes on top of origin/default
   # git swrb branch-to-switch
   swrb)
@@ -647,39 +732,28 @@ case "$command_name" in
     git switch -c "$branch"
     git cherry-pick "$base_sha...$head_sha"
     ;;
-  # copy branch or worktree state into the main checkout as one commit
-  # git test
+  # copy branch state into the current worktree as one commit
   # git test branch
   test)
-    [ "$#" -le 1 ] || die "Usage: git test [branch]"
-    main_worktree_raw=$(main_worktree_path)
-    [ -n "$main_worktree_raw" ] || die "Could not find the main worktree."
-    main_worktree=$(canonical_path "$main_worktree_raw")
+    [ "$#" -eq 1 ] || die "Usage: git test <branch>"
+    target_worktree=$(current_worktree_path)
     branch=${1:-}
     source_mode=worktree
     source_head=
 
-    if [ -n "$branch" ]; then
-      source_worktree=$(worktree_for_branch "$branch")
-      if [ -n "$source_worktree" ]; then
-        source_worktree=$(canonical_path "$source_worktree")
-        [ "$source_worktree" != "$main_worktree" ] || die "$branch is checked out in the main checkout, not a non-main worktree."
-      else
-        git -C "$main_worktree" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || die "Unknown local branch: $branch"
-        source_worktree=$main_worktree
-        source_mode=branch
-        source_head=$(git -C "$main_worktree" rev-parse --verify "refs/heads/$branch")
-      fi
-      commit_name=$branch
+    source_worktree=$(worktree_for_branch "$branch")
+    if [ -n "$source_worktree" ]; then
+      source_worktree=$(canonical_path "$source_worktree")
+      [ "$source_worktree" != "$target_worktree" ] || die "$branch is checked out in the current worktree; run git test from the worktree to copy into."
     else
-      source_worktree=$(current_worktree_path)
-      [ "$source_worktree" != "$main_worktree" ] || die "Usage: git test <branch> from the main checkout, or git test from a non-main worktree."
-      commit_name=$(git -C "$source_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-      [ -n "$commit_name" ] || commit_name=${source_worktree##*/}
+      git -C "$target_worktree" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || die "Unknown local branch: $branch"
+      source_worktree=$target_worktree
+      source_mode=branch
+      source_head=$(git -C "$target_worktree" rev-parse --verify "refs/heads/$branch")
     fi
 
-    require_clean_worktree "$main_worktree" "Main"
-    copy_git_test_state "$source_worktree" "$main_worktree" "$commit_name" "$source_mode" "$source_head"
+    require_clean_worktree "$target_worktree" "Current"
+    copy_git_test_state "$source_worktree" "$target_worktree" "$branch" "$source_mode" "$source_head"
     ;;
   # cherry-pick branch: "g cpb TEST"
   cpb)
