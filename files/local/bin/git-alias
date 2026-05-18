@@ -702,6 +702,15 @@ case "$command_name" in
   swm)
     git switch --detach "origin/$(main_branch)"
     ;;
+  # switch to local default branch
+  swmb)
+    branch=$(main_branch)
+    if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+      git switch "$branch"
+    else
+      git switch -c "$branch" "origin/$branch"
+    fi
+    ;;
   # switch branch even if it is checked out in another worktree
   # git swf branch|-
   swf)

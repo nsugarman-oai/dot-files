@@ -27,6 +27,7 @@ local-bin-flow-kill|files/local/bin/flow-kill|.local/bin/flow-kill
 local-bin-flow-list|files/local/bin/flow-list|.local/bin/flow-list
 local-bin-flow-localhost|files/local/bin/flow-localhost|.local/bin/flow-localhost
 local-bin-killport|files/local/bin/killport|.local/bin/killport
+local-bin-workstreams-kill|files/local/bin/workstreams_kill|.local/bin/workstreams_kill
 EOF
 }
 

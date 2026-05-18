@@ -64,28 +64,33 @@ bindkey '^I' expand-or-complete
 # INTERACTIVE_COMMENTS - use `#` comments in the shell
 setopt AUTO_CD INTERACTIVE_COMMENTS
 
+export EDITOR='code'
+
+function _open_editor() {
+  "${(@z)EDITOR}" "$@"
+}
+
 ## aliases
-# open a file in cursor (creating the dir as needed)
+# open a file in editor (creating the dir as needed)
 function c() {
   if [[ $# -lt 1 ]]; then
-    print -u2 "usage: c <path> [cursor args...]"
+    print -u2 "usage: c <path> [editor args...]"
     return 1
   fi
 
   local target="$1"
   mkdir -p -- "${target:h}"
-  # we have to touch the file for some reason, or else cursor won't open it
+  # Touch the file first so editor CLIs open a new file path consistently.
   touch -- "$target"
-  cursor "$@"
+  _open_editor "$@"
 }
 
-export EDITOR='cursor'
 
 # note: "zsh" sources ~/.zshrc
-alias czsh='cursor ~/.zshrc-public'
-alias czsho='cursor ~/.zshrc'
-alias cgit='cursor ~/.config/git/aliases.conf'
-alias cgit2='cursor ~/.local/bin/git-alias'
+alias czsh='_open_editor ~/.zshrc-public'
+alias czsho='_open_editor ~/.zshrc'
+alias cgit='_open_editor ~/.config/git/aliases.conf'
+alias cgit2='_open_editor ~/.local/bin/git-alias'
 
 alias g='git'
 alias n='pnpm'

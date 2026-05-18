@@ -41,6 +41,7 @@ Note: use these skills from the codex app (using `codex -e "..."` causes a sandb
 - `./link all` symlinks every managed file into its home-directory location.
 - `./unlink all` removes every managed symlink from its home-directory location.
 - `killport <port[,port]...>` kills listening processes on one or more ports, for example `killport 6006,6007`.
+- `workstreams_kill` kills Workstreams listeners on ports 4010, 4011, 5203, and 5204 when their cwd matches workstreams.
 
 ## Managed Files
 
@@ -54,3 +55,4 @@ Note: use these skills from the codex app (using `codex -e "..."` causes a sandb
 - `local-bin-flow-list`
 - `local-bin-flow-localhost`
 - `local-bin-killport`
+- `local-bin-workstreams-kill`
