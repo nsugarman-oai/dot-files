@@ -29,6 +29,32 @@ current_worktree_path() {
   canonical_path "$(git rev-parse --show-toplevel)"
 }
 
+git_test_lock_dir=
+
+release_git_test_lock() {
+  [ -n "${git_test_lock_dir:-}" ] || return 0
+  rmdir "$git_test_lock_dir" 2>/dev/null || true
+  git_test_lock_dir=
+}
+
+cleanup_git_test_lock() {
+  release_git_test_lock
+}
+
+acquire_git_test_lock() {
+  target_worktree=$1
+  git_dir=$(git -C "$target_worktree" rev-parse --absolute-git-dir)
+  git_test_lock_dir=$git_dir/codex-git-test.lock
+
+  if mkdir "$git_test_lock_dir" 2>/dev/null; then
+    return 0
+  fi
+
+  printf 'Another git test is already running in this checkout.\n' >&2
+  printf 'Agent: try again in a few seconds; the lock will resolve itself soon.\n' >&2
+  exit 1
+}
+
 worktree_for_branch() {
   target_ref="refs/heads/$1"
   git worktree list --porcelain | awk -v target_ref="$target_ref" '
@@ -304,6 +330,12 @@ copy_git_test_state() {
   commit_name=$3
   source_mode=${4:-worktree}
   source_head=${5:-}
+
+  acquire_git_test_lock "$target_worktree"
+  trap cleanup_git_test_lock EXIT HUP INT TERM
+
+  require_clean_worktree "$target_worktree" "Current"
+
   [ -n "$source_head" ] || source_head=$(git -C "$source_repo" rev-parse HEAD)
   original_head=$(git -C "$target_worktree" rev-parse HEAD)
   original_branch=$(git -C "$target_worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -321,6 +353,7 @@ copy_git_test_state() {
 
   cleanup_git_test_tmp() {
     rm -rf "$tmp_dir"
+    release_git_test_lock
   }
   trap cleanup_git_test_tmp EXIT HUP INT TERM
 
@@ -761,7 +794,6 @@ case "$command_name" in
       source_head=$(git -C "$target_worktree" rev-parse --verify "refs/heads/$branch")
     fi
 
-    require_clean_worktree "$target_worktree" "Current"
     copy_git_test_state "$source_worktree" "$target_worktree" "$branch" "$source_mode" "$source_head"
     ;;
   # cherry-pick branch: "g cpb TEST"
