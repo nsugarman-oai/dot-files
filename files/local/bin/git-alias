@@ -180,6 +180,34 @@ require_clean_worktree() {
   fi
 }
 
+require_pristine_worktree() {
+  worktree=$1
+  label=$2
+  git -C "$worktree" update-index -q --refresh >/dev/null 2>&1 || true
+
+  status_output=$(git -C "$worktree" status --porcelain)
+  if [ -n "$status_output" ]; then
+    printf '%s worktree has local changes: %s\n' "$label" "$worktree" >&2
+    printf '%s\n' "$status_output" >&2
+    exit 1
+  fi
+}
+
+recreate_branch_on_default() {
+  branch=$1
+  main_branch_name=$(main_branch)
+  base_sha=$(git merge-base "origin/$main_branch_name" "$branch")
+  head_sha=$(git rev-parse "$branch")
+
+  git switch --detach "origin/$main_branch_name" 2>/dev/null
+  git branch -D tmp >/dev/null 2>&1 || true
+  git branch tmp "$branch"
+  git branch -D "$branch"
+  git switch -c "$branch"
+
+  [ "$base_sha" = "$head_sha" ] || git cherry-pick "$base_sha...$head_sha"
+}
+
 clean_git_test_paths() {
   target_worktree=$1
   path_list=$2
@@ -478,6 +506,15 @@ rebase_main_branch() {
   trap - EXIT HUP INT TERM
 }
 
+switch_local_default_branch() {
+  branch=$(main_branch)
+  if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    git switch "$branch"
+  else
+    git switch -c "$branch" "origin/$branch"
+  fi
+}
+
 # returns "HEAD~<count>", with count defaulting to 0
 reset_target() {
   count=${1:-0}
@@ -652,6 +689,13 @@ case "$command_name" in
   rbm)
     git rebase "origin/$(main_branch)" "$@"
     ;;
+  # recreate current branch on top of origin/<default> by cherry-picking branch commits
+  rbmq)
+    [ "$#" -eq 0 ] || die "Usage: git rbmq"
+    branch=$(current_branch)
+    require_pristine_worktree "$(current_worktree_path)" "Current"
+    recreate_branch_on_default "$branch"
+    ;;
   # rebase on top of origin/branch
   rbb)
     git rebase "origin/$(current_branch)" "$@"
@@ -731,18 +775,17 @@ case "$command_name" in
         ;;
     esac
     ;;
-  # switch to main branch
+  # switch to local default branch
   swm)
+    switch_local_default_branch
+    ;;
+  # switch to detached origin/<default>
+  swmd)
     git switch --detach "origin/$(main_branch)"
     ;;
   # switch to local default branch
   swmb)
-    branch=$(main_branch)
-    if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
-      git switch "$branch"
-    else
-      git switch -c "$branch" "origin/$branch"
-    fi
+    switch_local_default_branch
     ;;
   # switch branch even if it is checked out in another worktree
   # git swf branch|-
@@ -764,15 +807,7 @@ case "$command_name" in
   swrb)
     branch=${1:-}
     [ -n "$branch" ] || die "Usage: git swrb <branch>"
-    main_branch_name=$(main_branch)
-    git switch --detach "origin/$main_branch_name" 2>/dev/null
-    git branch -D tmp >/dev/null 2>&1 || true
-    git branch tmp "$branch"
-    base_sha=$(git merge-base "origin/$main_branch_name" "$branch")
-    head_sha=$(git rev-parse "$branch")
-    git branch -D "$branch"
-    git switch -c "$branch"
-    git cherry-pick "$base_sha...$head_sha"
+    recreate_branch_on_default "$branch"
     ;;
   # copy branch state into the current worktree as one commit
   # git test branch
