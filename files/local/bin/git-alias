@@ -712,6 +712,14 @@ case "$command_name" in
   ftm)
     fetch_origin_main
     ;;
+  # fetch origin/main, then recreate current branch on top of origin/<default>
+  frq)
+    [ "$#" -eq 0 ] || die "Usage: git frq"
+    fetch_origin_main
+    branch=$(current_branch)
+    require_pristine_worktree "$(current_worktree_path)" "Current"
+    recreate_branch_on_default "$branch"
+    ;;
   # fetch origin/main, then rebase current branch on top of it
   fr)
     fetch_origin_main
