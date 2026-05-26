@@ -818,7 +818,7 @@ case "$command_name" in
     recreate_branch_on_default "$branch"
     ;;
   # copy branch state into the current worktree as one commit
-  # git test branch
+  # git test branch / git t branch
   test)
     [ "$#" -eq 1 ] || die "Usage: git test <branch>"
     target_worktree=$(current_worktree_path)
@@ -838,6 +838,17 @@ case "$command_name" in
     fi
 
     copy_git_test_state "$source_worktree" "$target_worktree" "$branch" "$source_mode" "$source_head"
+    ;;
+  # reset and clean to merge base, then fetch and recreate current branch
+  # git test-new / git tn
+  test-new)
+    [ "$#" -eq 0 ] || die "Usage: git test-new"
+    git reset --hard "$(git merge-base "origin/$(main_branch)" HEAD)"
+    git clean -fd
+    fetch_origin_main
+    branch=$(current_branch)
+    require_pristine_worktree "$(current_worktree_path)" "Current"
+    recreate_branch_on_default "$branch"
     ;;
   # cherry-pick branch: "g cpb TEST"
   cpb)
