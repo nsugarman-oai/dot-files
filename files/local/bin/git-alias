@@ -469,6 +469,26 @@ copy_git_test_state() {
   trap - EXIT HUP INT TERM
 }
 
+copy_branch_state_to_current_worktree() {
+  target_worktree=$(current_worktree_path)
+  branch=$1
+  source_mode=worktree
+  source_head=
+
+  source_worktree=$(worktree_for_branch "$branch")
+  if [ -n "$source_worktree" ]; then
+    source_worktree=$(canonical_path "$source_worktree")
+    [ "$source_worktree" != "$target_worktree" ] || die "$branch is checked out in the current worktree; run git test from the worktree to copy into."
+  else
+    git -C "$target_worktree" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || die "Unknown local branch: $branch"
+    source_worktree=$target_worktree
+    source_mode=branch
+    source_head=$(git -C "$target_worktree" rev-parse --verify "refs/heads/$branch")
+  fi
+
+  copy_git_test_state "$source_worktree" "$target_worktree" "$branch" "$source_mode" "$source_head"
+}
+
 fetch_origin_main() {
   main_branch_name=$(main_branch)
   git fetch --no-tags origin "refs/heads/$main_branch_name:refs/remotes/origin/$main_branch_name"
@@ -531,6 +551,23 @@ branch_list() {
   fi
 
   git for-each-ref --color=auto --sort=-committerdate --count="$count" --format="$format" refs/heads
+}
+
+page_if_terminal() {
+  if [ ! -t 1 ]; then
+    cat
+    return
+  fi
+
+  pager_command=${GIT_PAGER:-}
+  if [ -z "$pager_command" ]; then
+    pager_command=$(git var GIT_PAGER 2>/dev/null || true)
+  fi
+  pager_command=${pager_command:-${PAGER:-less}}
+
+  LESS=${LESS:-FRX}
+  export LESS
+  eval "exec $pager_command"
 }
 
 log_list() {
@@ -617,7 +654,8 @@ log_list() {
           }
           printf "%s %s %s(%s)%s\n", prefix, $4, color_time, shorten_relative_time($5), color_reset
         }
-      '
+      ' |
+      page_if_terminal
     return
   fi
 
@@ -791,6 +829,12 @@ case "$command_name" in
   swmd)
     git switch --detach "origin/$(main_branch)"
     ;;
+  # switch to detached origin/<branch>
+  # git swo branch
+  swo)
+    [ "$#" -eq 1 ] || die "Usage: git swo <branch>"
+    git switch --detach "origin/$1"
+    ;;
   # switch to local default branch
   swmb)
     switch_local_default_branch
@@ -821,23 +865,7 @@ case "$command_name" in
   # git test branch / git t branch
   test)
     [ "$#" -eq 1 ] || die "Usage: git test <branch>"
-    target_worktree=$(current_worktree_path)
-    branch=${1:-}
-    source_mode=worktree
-    source_head=
-
-    source_worktree=$(worktree_for_branch "$branch")
-    if [ -n "$source_worktree" ]; then
-      source_worktree=$(canonical_path "$source_worktree")
-      [ "$source_worktree" != "$target_worktree" ] || die "$branch is checked out in the current worktree; run git test from the worktree to copy into."
-    else
-      git -C "$target_worktree" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || die "Unknown local branch: $branch"
-      source_worktree=$target_worktree
-      source_mode=branch
-      source_head=$(git -C "$target_worktree" rev-parse --verify "refs/heads/$branch")
-    fi
-
-    copy_git_test_state "$source_worktree" "$target_worktree" "$branch" "$source_mode" "$source_head"
+    copy_branch_state_to_current_worktree "$1"
     ;;
   # reset and clean to merge base, then fetch and recreate current branch
   # git test-new / git tn
@@ -849,6 +877,13 @@ case "$command_name" in
     branch=$(current_branch)
     require_pristine_worktree "$(current_worktree_path)" "Current"
     recreate_branch_on_default "$branch"
+    ;;
+  # reset hard to merge base, then copy branch state into the current worktree
+  # git test-force branch / git tf branch
+  test-force)
+    [ "$#" -eq 1 ] || die "Usage: git test-force <branch>"
+    git reset --hard "$(git merge-base "origin/$(main_branch)" HEAD)"
+    copy_branch_state_to_current_worktree "$1"
     ;;
   # cherry-pick branch: "g cpb TEST"
   cpb)
@@ -865,7 +900,7 @@ case "$command_name" in
   lg2)
     log_list 30 "$@"
     ;;
-  # decorated commit log with relative time, unlimited
+  # decorated commit log with relative time, paged and unlimited
   lg3)
     log_list all "$@"
     ;;

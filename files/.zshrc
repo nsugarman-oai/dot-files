@@ -44,7 +44,3 @@ fi
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
-
-# Socket Firewall: add package-manager wrappers to PATH.
-export PATH="/usr/local/bin/sfw:${PATH}"
-# Socket Firewall: end package-manager wrappers PATH entry.

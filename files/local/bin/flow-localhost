@@ -10,6 +10,7 @@ CRASH_CONTEXT_LINES=80
 
 repo_root="$(pwd -P)"
 tilt_work_dir="$repo_root/api/outerloop"
+tilt_repo_dir="$repo_root/api/tilt"
 primary_repo_root="$HOME/code/openai"
 worktree_setup_script="$repo_root/.codex/environments/monorepo_worktree_setup.sh"
 script_name="${0##*/}"
@@ -236,7 +237,8 @@ flowkit_pgids_for_target_dir() {
     [ -n "$pid" ] || continue
 
     cwd="$(pid_cwd "$pid")"
-    if [ -z "$cwd" ] || ! path_is_within "$cwd" "$tilt_work_dir"; then
+    if [ -z "$cwd" ] ||
+      { ! path_is_within "$cwd" "$tilt_work_dir" && ! path_is_within "$cwd" "$tilt_repo_dir"; }; then
       continue
     fi
 
