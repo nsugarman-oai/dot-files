@@ -16,6 +16,7 @@ worktree_setup_script="$repo_root/.codex/environments/monorepo_worktree_setup.sh
 script_name="${0##*/}"
 verbose=0
 shared_backend=0
+staging=0
 shutdown_requested=0
 server_pid=""
 tracker_pid=""
@@ -102,7 +103,7 @@ announce_frontend_url_after_errors() {
 }
 
 usage() {
-  printf 'Usage: %s [-v|--verbose] [--shared-backend]\n' "$script_name"
+  printf 'Usage: %s [-v|--verbose] [--shared-backend] [--staging]\n' "$script_name"
 }
 
 branch_name_for_title() {
@@ -178,6 +179,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --shared-backend)
       shared_backend=1
+      ;;
+    --staging)
+      staging=1
       ;;
     -h|--help)
       usage
@@ -460,7 +464,26 @@ source_worktree_setup_if_needed() {
   source "$worktree_setup_script"
 }
 
+configure_staging_api_key_if_needed() {
+  if [ "$staging" -eq 0 ]; then
+    return 0
+  fi
+
+  command -v secret >/dev/null 2>&1 || {
+    printf 'flow-localhost: required command not found: secret\n' >&2
+    exit 1
+  }
+
+  OPENAI_API_KEY="$(secret get staging flowkit-chatgpt-service-account-key --value-only)"
+  [ -n "$OPENAI_API_KEY" ] || {
+    printf 'flow-localhost: staging API key secret returned an empty value\n' >&2
+    exit 1
+  }
+  export OPENAI_API_KEY
+}
+
 source_worktree_setup_if_needed
+configure_staging_api_key_if_needed
 
 command -v applied >/dev/null 2>&1 || {
   printf 'flow-localhost: required command not found: applied\n' >&2
