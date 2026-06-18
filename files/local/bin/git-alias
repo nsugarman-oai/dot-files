@@ -882,7 +882,8 @@ case "$command_name" in
   # git test-force branch / git tf branch
   test-force)
     [ "$#" -eq 1 ] || die "Usage: git test-force <branch>"
-    git reset --hard "$(git merge-base "origin/$(main_branch)" HEAD)"
+    base_head=$(git_test_base_head "$(current_worktree_path)" "$1" HEAD)
+    git reset --hard "$base_head"
     copy_branch_state_to_current_worktree "$1"
     ;;
   # cherry-pick branch: "g cpb TEST"
